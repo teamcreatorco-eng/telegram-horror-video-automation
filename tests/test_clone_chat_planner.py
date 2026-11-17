@@ -78,3 +78,20 @@ def test_repeated_validation_failure_asks_provider_for_a_distinct_retry():
     with pytest.raises(ValueError, match="Same fault"):
         adapter.planning_writer.ask(Model(), "Original brief", invalid, 800)
     assert len(prompts) == len(set(prompts)) == 3
+
+
+@pytest.mark.parametrize(("lengths", "expected_error"), [
+    ([14] * 3 + [13] * 21, None),
+    ([14] * 5 + [13] * 19, "Speech has 317 words"),
+    ([17] + [12] * 2 + [13] * 21, "at or below 16 words"),
+])
+def test_two_minute_story_allows_a_small_overage_when_each_beat_fits(lengths, expected_error):
+    writer = adapter.planning_writer
+    story = {"entity": "परछाईं", "characters": [{"tag": "@CHAR-01-BABLI", "name": "बबली"}],
+             "speech": [{"speaker": "NARRATOR", "line": " ".join(["छाया"] * length)} for length in lengths]}
+    count, low, high = writer.duration_limits(120)
+    if expected_error:
+        with pytest.raises(ValueError, match=expected_error):
+            writer.check_story(story, count, low, high, editorial_margin=True)
+    else:
+        writer.check_story(story, count, low, high, editorial_margin=True)
