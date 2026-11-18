@@ -146,3 +146,25 @@ def test_key_registration_is_verified_before_rental(monkeypatch):
     vast.ensure_ssh_key("ssh-ed25519 public")
     vast.ensure_ssh_key("ssh-ed25519 public")
     assert calls == ["get", "register", "get", "get"]
+
+
+def test_failed_creation_without_contract_is_reconciled_after_status_checks(monkeypatch, tmp_path):
+    journal = tmp_path / "raghu-rental.json"
+    store.save(journal, {"id": None, "label": "job", "destroyed": False})
+    reads = []
+    monkeypatch.setattr(vast, "instances", lambda: reads.append(1) or [])
+    monkeypatch.setattr(vast.time, "sleep", lambda seconds: None)
+    vast.destroy(journal)
+    assert len(reads) == 5
+    assert store.read(journal)["destroyed"]
+
+
+def test_vast_rejection_exposes_reason_and_redacts_api_key(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(vast, "required", lambda name: "private-test-token")
+    monkeypatch.setattr(vast.subprocess, "run", lambda *args, **kw: SimpleNamespace(
+        returncode=1, stderr="Insufficient credit private-test-token", stdout=""))
+    with pytest.raises(RuntimeError, match="Insufficient credit") as error:
+        vast.vast("create", "instance", "42")
+    assert "private-test-token" not in str(error.value)
+    assert "[redacted]" in str(error.value)

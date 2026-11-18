@@ -75,10 +75,16 @@ def vast(*args):
     required("VAST_API_KEY")
     try:
         result = subprocess.run(["vastai", "--raw", "--retry", "1", *map(str, args)],
-                                capture_output=True, text=True, timeout=45, check=True)
+                                capture_output=True, text=True, timeout=45, check=False)
+        if result.returncode:
+            detail = (result.stderr or result.stdout or "No provider details returned").strip()
+            detail = detail.replace(required("VAST_API_KEY"), "[redacted]")
+            raise RuntimeError("Vast operation failed: " + " ".join(args[:2]) + ". " + detail[:400])
         value = json.loads(result.stdout)
         if isinstance(value, dict) and (value.get("error") or value.get("success") is False):
-            raise ValueError
+            detail = str(value.get("msg") or value.get("message") or value.get("error") or "Request rejected")
+            detail = detail.replace(required("VAST_API_KEY"), "[redacted]")
+            raise RuntimeError("Vast operation failed: " + " ".join(args[:2]) + ". " + detail[:400])
         return value
     except (OSError, ValueError, subprocess.SubprocessError):
         raise RuntimeError("Vast operation failed: " + " ".join(args[:2])) from None
@@ -158,8 +164,6 @@ def close_rental(journal, preserve):
     row = next((r for r in instances() if r.get("label") == state["label"]
                 and (not state.get("id") or r["id"] == state["id"])), None)
     if row is None:
-        if not state.get("id"):
-            return
         store.save(journal, {**state, "destroyed": True, "recovery_stop": False,
                              "missing_at": time.time()})
         return
@@ -192,12 +196,17 @@ def destroy(journal):
     state = store.read(journal)
     if state.get("destroyed"):
         return
-    for _ in range(5):
+    for attempt in range(5):
         try:
             rows = [r for r in instances() if r.get("label") == state["label"]
                     or r["id"] == state.get("id")]
             if not rows and not state.get("id"):
-                raise RuntimeError("Vast creation is unconfirmed. Check the rental label in Vast.")
+                if attempt < 4:
+                    time.sleep(4)
+                    continue
+                store.save(journal, {**state, "destroyed": True, "recovery_stop": False,
+                                     "missing_at": time.time()})
+                return
             for row in rows:
                 vast("destroy", "instance", row["id"], "--yes")
             if not any(r.get("label") == state["label"] or r["id"] == state.get("id") for r in instances()):
