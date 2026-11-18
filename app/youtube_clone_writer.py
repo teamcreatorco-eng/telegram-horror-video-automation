@@ -197,7 +197,7 @@ def renderer_plan(project, draft, seconds=60):
     return result, preview
 
 
-def check_script(script, seconds=60):
+def check_script(script, seconds=60, *, editorial_checks=True):
     count = seconds // 5
     if len(script.beats) != count:
         raise ValueError(f"Write exactly {count} ordered beats")
@@ -205,7 +205,7 @@ def check_script(script, seconds=60):
     dialogue = set()
     for number, beat in enumerate(script.beats, 1):
         line_words = len(beat.speech.split())
-        if (beat.scene_number != number or line_words > 16 or not re.search(r"[\u0900-\u097f]", beat.speech)
+        if (beat.scene_number != number or (editorial_checks and line_words > 16) or not re.search(r"[\u0900-\u097f]", beat.speech)
                 or re.search(r"[A-Za-z\r\n]", beat.speech)):
             raise ValueError(f"Beat {number} must have its exact number and one short Hindi line")
         if beat.speaker != "NARRATOR":
@@ -216,9 +216,9 @@ def check_script(script, seconds=60):
     word_limit = int(seconds * 155 / 60)
     dialogue_limit = count // 4
     direct_lines = sum(b.speaker != "NARRATOR" for b in script.beats)
-    if words > word_limit:
+    if editorial_checks and words > word_limit:
         raise ValueError(f"The script has {words} words. Shorten to {word_limit} or fewer.")
-    if len(dialogue) > 2 or direct_lines > dialogue_limit:
+    if editorial_checks and (len(dialogue) > 2 or direct_lines > dialogue_limit):
         raise ValueError(f"The script has {direct_lines} dialogue lines across {len(dialogue)} speakers. "
                          f"Use at most {dialogue_limit} dialogue lines and at most two speakers.")
 
@@ -312,7 +312,7 @@ def plan(folder, title, choose_topic, check, progress, *, seconds=60):
         existing_script = (folder / f"youtube-clone-{prefix}script.json").is_file()
 
         def validate_script(value):
-            check_script(value, seconds)
+            check_script(value, seconds, editorial_checks=False)
             if not existing_script and sum(beat.speech.strip() in example_lines for beat in value.beats) > 1:
                 raise ValueError("Write original Hindi lines and events. The approved scripts are style references.")
 
@@ -371,61 +371,12 @@ def plan(folder, title, choose_topic, check, progress, *, seconds=60):
                   max(3000, count * 500), lambda value: assemble_board(script, value, folder, selected_title, seconds))
         return script, selected_title, board
 
-    def review(script, selected_title, current, name, allow_repair):
-        def check_review(report):
-            revised = repair_board(current, report) if allow_repair else current
-            if not allow_repair and report.replacements:
-                raise ValueError("Final review reports remaining issues without replacements")
-            if any(issue.scene_number > count for issue in report.issues):
-                raise ValueError("Review flagged a scene outside the storyboard")
-            assemble_board(script, revised, folder, selected_title, seconds)
-
-        instruction = ("Give a complete replacement direction for exactly each flagged scene. Preserve the referenced "
-                       "cast, script, and plates. For a broken cut, name both states, flag each side that needs "
-                       "changing, and make those replacements agree. Never hide the event by setting it as finished "
-                       "in the opening still."
-                       if allow_repair else "Report any remaining issues. Return no replacements.")
-        return stage(name, Review,
-                     "Review this storyboard against its locked Hindi speech and stated main events. Flag only material "
-                     "faults: the event is already complete in the opening, an on-screen action is missing from motion, "
-                     "a sound event lacks a cue, a cut jumps a character or prop position without cause, a room or "
-                     "door changes sides or state, or the action requires text, an internal cut or multiple unrelated "
-                     "events in five seconds. A change of angle or someone being cropped out is valid if their "
-                     "position and props do not actually change. A person first seen remains allowed if their "
-                     "presence is plausible in the established space. Check every adjacent cut. Check that "
-                     "the last shots visibly deliver the locked story's central payoff and consequence. "
-                     f"Return empty arrays when all scenes pass. {instruction}\n"
-                     f"Locked beats: {script.model_dump_json()}\nBoard: {current.model_dump_json()}",
-                     max(2500, count * 375) if allow_repair else max(1000, count * 160), check_review)
-
-    def review_round(script, selected_title, board, prefix):
-        progress("Clone YouTube is reviewing actions and continuity", 23 if prefix else 18)
-        first = review(script, selected_title, board, prefix + "review", True)
-        if not first.issues:
-            return board, []
-        board = repair_board(board, first)
-        progress(f"Clone YouTube is checking {len(first.issues)} repaired scenes", 23 if prefix else 21)
-        remaining = review(script, selected_title, board, prefix + "review-final", False)
-        return board, remaining.issues
-
     script, selected_title, board = build_round("")
-    source_title = selected_title
-    board, remaining = review_round(script, selected_title, board, "")
-    if remaining:
-        reasons = "\n".join(f"Shot {issue.scene_number}: {issue.reason}" for issue in remaining)
-        script, selected_title, board = build_round(
-            "rewrite-", f"Keep this title: {source_title}. The earlier draft failed review. "
-            "Write a simpler version around the same title, changing story beats as needed before locking "
-            "the new draft. Solve the underlying cause of these faults:\n" + reasons,
-            keep_title=source_title)
-        board, remaining = review_round(script, selected_title, board, "rewrite-")
-    if remaining:
-        details = "; ".join(f"Shot {i.scene_number}: {i.reason}" for i in remaining[:3])
-        raise RuntimeError(f"Clone storyboard still has material continuity issues after a rewrite. {details}"[:450])
+    # Production has no AI review, repair, or editorial rewrite stage.
     project, (result, preview) = assemble_board(script, board, folder, selected_title, seconds)
     check()
     store.save(folder / "clone-source-plan.json", project)
     store.save(folder / "clone-renderer-preview.json", preview)
     store.save(final, result)
-    progress(f"Clone YouTube script and prompts ready · {count}/{count} scenes checked", 24)
+    progress(f"Clone YouTube script and prompts ready · {count}/{count} scenes written", 24)
     return result

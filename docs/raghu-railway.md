@@ -101,3 +101,12 @@ is shared between image and motion workers; combined distinct model weights
 are approximately 50.6 GB. No LTX weights or HF token are required for this
 public Hunyuan path. Setup and per-clip elapsed times are recorded in
 `events.jsonl`. Hunyuan GPU speed and cost have not been benchmarked here.
+
+### Production review policy
+
+AI editorial/continuity review, automatic quality repairs, image review and motion
+review are disabled. Word counts and per-line speech lengths remain writing
+guidance, not rejection gates. JSON fields, asset references, scene ordering,
+credentials, and readable media files are still checked because later stages
+need them to run. Malformed responses can be retried; these are format repairs,
+not creative review. Generated content proceeds directly to rendering and editing.

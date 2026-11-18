@@ -238,23 +238,7 @@ def plan(folder, title, choose_topic, check, progress, *, seconds):
             title = raghu_services.choose_title(folder, check)
         progress("Clone YouTube is writing the Hindi script", 9)
         model = DeepSeekWriter(folder, check, progress)
-        try:
-            planning_writer.write_plan(title, seconds, output, model=model, short_editorial_margin=True)
-        except ValueError as error:
-            if not any(reason in str(error) for reason in CONTINUITY_FAILURES):
-                raise
-            check()
-            progress("Clone YouTube is rewriting the story after continuity review", 19)
-            model.simpler_draft = True
-            model.rewrite_notes, model.last_review_issues = model.last_review_issues, []
-            model.last_story = None
-            try:
-                planning_writer.write_plan(title, seconds, output, model=model, short_editorial_margin=True)
-            except ValueError as retry_error:
-                if not any(reason in str(retry_error) for reason in CONTINUITY_FAILURES):
-                    raise
-                details = "; ".join(model.last_review_issues[:2])
-                raise ValueError(f"{retry_error}. {details}"[:650]) from retry_error
+        planning_writer.write_plan(title, seconds, output, model=model, short_editorial_margin=True)
     raw = (output / "pipeline.json").read_bytes()
     envelope = store.read(output / "railway-planning-export.json")
     if envelope != planning_writer.export_source(raw):
@@ -265,5 +249,5 @@ def plan(folder, title, choose_topic, check, progress, *, seconds):
     store.save(folder / "clone-source-plan.json", source)
     store.save(folder / "clone-renderer-preview.json", preview)
     store.save(final, result)
-    progress(f"Clone YouTube script and prompts ready · {len(result['shots'])}/{len(result['shots'])} scenes checked", 24)
+    progress(f"Clone YouTube script and prompts ready · {len(result['shots'])}/{len(result['shots'])} scenes written", 24)
     return result

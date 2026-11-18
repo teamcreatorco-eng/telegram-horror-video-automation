@@ -1,4 +1,4 @@
-"""Create a reviewed Hindi folk-horror plan from a title and duration."""
+"""Create a Hindi folk-horror plan; production skips editorial review."""
 from __future__ import annotations
 
 import argparse
@@ -77,7 +77,7 @@ def duration_limits(seconds):
     return (seconds + 2) // 5, round(seconds * 130 / 60), round(seconds * 155 / 60)
 
 
-def check_story(story, count, low, high, *, editorial_margin=False):
+def check_story(story, count, low, high, *, editorial_margin=False, editorial_checks=True):
     fields(story, ("entity", "characters", "speech"))
     text_fields(story, ("entity",))
     cast, speech = story["characters"], story["speech"]
@@ -102,9 +102,9 @@ def check_story(story, count, low, high, *, editorial_margin=False):
     words = sum(lengths)
     # Hindi word counts estimate pace. Allow a small overage only when no beat is crowded.
     ceiling = high + max(2, high // 50) if editorial_margin else high
-    if not low <= words <= ceiling:
+    if editorial_checks and not low <= words <= ceiling:
         raise ValueError(f"Speech has {words} words; expected {low}–{ceiling}")
-    if editorial_margin and (words > high or count == 6) and max(lengths) > 16:
+    if editorial_checks and editorial_margin and (words > high or count == 6) and max(lengths) > 16:
         raise ValueError("Keep each spoken line at or below 16 words for its five-second shot")
     if not any(beat["speaker"] == NARRATOR for beat in speech):
         raise ValueError("Include narrator speech")
@@ -125,7 +125,7 @@ def check_assets(assets, cast):
         raise ValueError("Use one to six unique background plates with #BGD-01-NAME tags")
 
 
-def check_shots(result, speech, assets):
+def check_shots(result, speech, assets, *, editorial_checks=True):
     fields(result, ("scenes",))
     shots = result["scenes"]
     if not isinstance(shots, list) or len(shots) != len(speech):
@@ -142,7 +142,7 @@ def check_shots(result, speech, assets):
             raise ValueError(f"Shot {number}: character tags must be unique known cast IDs")
         if beat["speaker"] != NARRATOR and beat["speaker"] not in tags:
             raise ValueError(f"Shot {number}: the speaker must be visible")
-        if shot["first_frame_description"] in {shot["visual_action"], shot["ending_state"]}:
+        if editorial_checks and shot["first_frame_description"] in {shot["visual_action"], shot["ending_state"]}:
             raise ValueError(f"Shot {number}: separate the opening from the action and ending")
 
 
@@ -259,7 +259,7 @@ def plan_title(title: str, duration_seconds: int, *, project_id: str, model: Wri
         "Use NARRATOR or a declared character tag for each line. Keep character dialogue sparse. No headings, stage cues or duplicated lines in speech."
     )
     def check_speech(value):
-        check_story(value, count, low, high, editorial_margin=short_editorial_margin)
+        check_story(value, count, low, high, editorial_margin=short_editorial_margin, editorial_checks=False)
 
     story = ask(model, story_prompt, check_speech, max(2500, count * 180))
     speech = story["speech"]
@@ -288,31 +288,10 @@ def plan_title(title: str, duration_seconds: int, *, project_id: str, model: Wri
         "Use first_frame_description for the static frame before the action, and ending_state for the result after the action. "
         "Preserve all current scene-specific states explicitly across angle changes. The JSON contract supersedes the template's output layout."
     )
-    shots = ask(model, scenes_prompt, lambda x: check_shots(x, speech, assets), max(4000, count * 340))
+    shots = ask(model, scenes_prompt, lambda x: check_shots(x, speech, assets, editorial_checks=False), max(4000, count * 340))
     draft = {**assets, **shots}
     review_history = []
-    for _ in range(4):
-        review_prompt = rules + (
-            "\nYou are the shot continuity editor. Independently check all shots against their locked Hindi and the previous ending. "
-            "Check opening causes vs completed actions, visible casting, actor/prop placement, screen direction, camera framing, spatial geometry, "
-            "speech attribution, and sound timing. Read Hindi clauses literally, then allow backstory and unseen voices to use a listener reaction or object cue. "
-            "Only flag material issues. Inspect continuity at every cut. Repair enough adjacent shots or plate descriptions to fix the issue. "
-            "Verify the final shots show the outcome of the central event or rule in the locked speech. "
-            "A new mystery that interrupts the payoff is a blocking problem. "
-            'Return only JSON: {"checked_scenes":[1,2],"issues":["Shot N: problem"],'
-            '"shot_repairs":[{"scene_number":1,"changes":{"first_frame_description":"..."}}],'
-            '"asset_repairs":[{"tag":"#BGD-01-NAME","changes":{"look_summary":"..."}}]}. '
-            "Use the actual complete list of checked shot numbers. Keep all three other arrays empty if the plan passes. "
-            "Repair existing shots or look/voice fields only. Keep locked speech, speakers, asset tags and shot order. "
-            f"\nExact speech: {locked_speech}\nPlan to check: {as_json(draft)}"
-        )
-        review = ask(model, review_prompt, lambda x: check_review(x, draft, speech), max(2400, count * 160))
-        review_history.append(review)
-        if not review["issues"]:
-            break
-        draft = apply_repairs(review, draft, speech)
-    else:
-        raise ValueError("Shot review still flagged continuity issues after the final repair pass")
+    # No AI continuity editor, repair passes, or editorial rejection gate.
 
     project = new_project(project_id, "B", title, 0)
     idea = {"index": 1, "title": title, "hook": speech[0]["line"], "entity_archetype": "Pret-aatma"}
@@ -330,11 +309,11 @@ def plan_title(title: str, duration_seconds: int, *, project_id: str, model: Wri
         project["scenes"].append({**shot, "speaker": speaker,
                                   "narration_text": beat["line"] if speaker == NARRATOR else "",
                                   "devanagari_dialogue": beat["line"] if speaker != NARRATOR else ""})
-    project.update(style_reference=STYLE_LOCK, writing_path="Title-only editorial drafting and shot repair; original prompt builder and validator.",
+    project.update(style_reference=STYLE_LOCK, writing_path="Title-only drafting; no AI review or editorial rejection.",
                    raw_stages={"story_prompt": story_template, "characters_prompt": characters_prompt,
                                "backgrounds_prompt": backgrounds_prompt, "scenes_prompt": scenes_template},
                    planning_review=review_history)
-    audit_opening_cast(project, model)
+    validate(project, scene_count=len(project["scenes"]))
     return project
 
 
@@ -356,7 +335,7 @@ def write_plan(title, duration_seconds, output: Path, *, model: WritingModel | N
     if output.exists():
         raise FileExistsError(f"Output directory already exists: {output}")
     project = plan_title(title, duration_seconds, project_id=output.name, model=model,
-                         short_editorial_margin=short_editorial_margin)
+                         short_editorial_margin=short_editorial_margin, editorial_checks=False)
     return save_plan(project, output)
 
 

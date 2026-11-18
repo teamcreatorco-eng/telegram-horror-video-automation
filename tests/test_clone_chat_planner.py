@@ -6,11 +6,11 @@ from app import clone_chat_planner as adapter
 
 
 @pytest.mark.parametrize("failure, expected_attempts", [
-    ("Shot review still flagged continuity issues after the final repair pass", [False, True]),
-    ("Previous response failed validation: A proposed repair must actually change a field.", [False, True]),
+    ("Shot review still flagged continuity issues after the final repair pass", [False]),
+    ("Previous response failed validation: A proposed repair must actually change a field.", [False]),
     ("Invalid script", [False]),
 ])
-def test_clone_chat_rewrites_once_only_for_continuity(monkeypatch, tmp_path, failure, expected_attempts):
+def test_clone_chat_has_no_continuity_rewrite(monkeypatch, tmp_path, failure, expected_attempts):
     attempts = []
 
     def write_plan(title, duration, output, *, model, short_editorial_margin):
@@ -95,3 +95,30 @@ def test_two_minute_story_allows_a_small_overage_when_each_beat_fits(lengths, ex
             writer.check_story(story, count, low, high, editorial_margin=True)
     else:
         writer.check_story(story, count, low, high, editorial_margin=True)
+
+
+def test_production_planner_accepts_83_words_without_any_review_call():
+    writer = adapter.planning_writer
+    story = {"entity": "परछाईं", "characters": [{"tag": "@CHAR-01-BABLI", "name": "बबली"}],
+             "speech": [{"speaker": "NARRATOR", "line": " ".join(["छाया"] * n)}
+                        for n in [14, 14, 14, 14, 14, 13]]}
+    assets = {"characters": [{**story["characters"][0], "look_summary": "Woman in blue", "voice_description": "Hindi woman"}],
+              "backgrounds": [{"tag": "#BGD-01-ROOM", "location_name": "कमरा", "look_summary": "An empty room"}]}
+    shots = {"scenes": [{"scene_number": i, "title": "कमरा", "background_tag": "#BGD-01-ROOM",
+                         "character_tags": ["@CHAR-01-BABLI"],
+                         **{key: "She stands by the door" for key in writer.VISUAL_FIELDS}}
+                        for i in range(1, 7)]}
+    class Model:
+        def __init__(self):
+            self.calls = []
+            self.answers = iter([story, assets, shots])
+        def complete(self, prompt, **kwargs):
+            self.calls.append(prompt)
+            assert "You are the shot continuity editor" not in prompt
+            return json.dumps(next(self.answers), ensure_ascii=False)
+    model = Model()
+    project = writer.plan_title("बंद दरवाज़ा", 30, project_id="no-review-test", model=model)
+    assert len(model.calls) == 3
+    assert project["script"]["word_count"] == 83
+    assert len(project["scenes"]) == 6
+    assert project["planning_review"] == []
