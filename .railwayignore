@@ -7,5 +7,6 @@ __pycache__/
 **/__pycache__/
 .pytest_cache/
 tests/
+app/raghu_assets/review-fixture/
 docs/course-transcript.md
 *.log
