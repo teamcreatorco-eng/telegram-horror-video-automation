@@ -1,6 +1,7 @@
 """Budgeted Vast lease and SSH asset transport for the Raghu worker."""
 import base64
 import json
+import logging
 import ssl
 import os
 import shlex
@@ -26,6 +27,16 @@ def motion_model():
     if model not in ("wan22", "ltx", "hunyuan15"):
         raise RuntimeError("RAGHU_MOTION_MODEL must be wan22, ltx or hunyuan15.")
     return model
+
+
+def check_available_credit(credit, estimated_cost):
+    """An explicit operator override may start a test without its full estimate."""
+    if credit <= 0:
+        raise RuntimeError("Vast credit is empty. Add credit before renting a GPU.")
+    if credit < estimated_cost:
+        if os.getenv("RAGHU_ALLOW_LOW_BALANCE", "").lower() != "true":
+            raise RuntimeError(f"Vast has ${credit:.2f} credit. The lowest eligible rental needs about ${estimated_cost:.2f}.")
+        logging.warning("Starting with operator low-balance override: credit $%.2f, estimate $%.2f", credit, estimated_cost)
 
 
 def image_model():
@@ -563,8 +574,7 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
                 raise RuntimeError("The failed Vast rental was released. No replacement host fits the remaining job budget.")
             raise RuntimeError("No Vast offer fits the GPU, bandwidth and job budget settings.")
         offer = min(eligible, key=quote)
-        if credit < quote(offer):
-            raise RuntimeError(f"Vast has ${credit:.2f} credit. The lowest eligible rental needs about ${quote(offer):.2f}.")
+        check_available_credit(credit, quote(offer))
         started = time.time()
         state.update(rate=offer["dph_total"], gpu=gpu, quantization=quantization, motion_model=model,
                      image_model=still_model, offer_id=offer["id"], machine_id=offer.get("machine_id"), started=started)

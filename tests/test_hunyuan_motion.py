@@ -2,9 +2,20 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import pytest
 from types import SimpleNamespace
 
 from app import raghu_pipeline as pipeline, raghu_vast
+
+
+def test_low_balance_requires_explicit_override_and_positive_credit(monkeypatch):
+    monkeypatch.delenv("RAGHU_ALLOW_LOW_BALANCE", raising=False)
+    with pytest.raises(RuntimeError, match="lowest eligible rental"):
+        raghu_vast.check_available_credit(.66, 1.06)
+    monkeypatch.setenv("RAGHU_ALLOW_LOW_BALANCE", "true")
+    raghu_vast.check_available_credit(.66, 1.06)
+    with pytest.raises(RuntimeError, match="credit is empty"):
+        raghu_vast.check_available_credit(0, 1.06)
 
 
 def test_full_clone_production_accepts_hunyuan_and_reaches_generation(monkeypatch, tmp_path):
