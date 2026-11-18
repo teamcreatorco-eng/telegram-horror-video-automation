@@ -12,6 +12,10 @@ from . import media, store
 VOICE = "hi-IN-MadhurNeural"
 
 
+def silent():
+    return os.getenv("RAGHU_NARRATION_PROVIDER", "").lower() == "none"
+
+
 def narrator_folder(folder):
     return folder / "narration-madhur"
 

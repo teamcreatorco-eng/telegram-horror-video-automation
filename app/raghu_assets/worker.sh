@@ -9,6 +9,24 @@ export HF_HUB_DISABLE_PROGRESS_BARS=1 TOKENIZERS_PARALLELISM=false PIP_NO_CACHE_
 export PYTHONUNBUFFERED=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True OMP_NUM_THREADS=8
 case "$1" in
   stills)
+    if [ "${RAGHU_IMAGE_MODEL:-flux}" = qwen2511 ]; then
+      if [ ! -f qwen-env/.ready ]; then
+        if ! command -v git >/dev/null; then
+          apt-get update -qq
+          apt-get install -y -qq git
+        fi
+        git init QwenComfyUI
+        git -C QwenComfyUI fetch --depth 1 https://github.com/Comfy-Org/ComfyUI.git 0263e48806e5be43fa926d3961caac29cd268d84
+        git -C QwenComfyUI checkout --detach FETCH_HEAD
+        mkdir -p QwenComfyUI/input
+        python -m venv --without-pip --system-site-packages qwen-env
+        python -m pip --python qwen-env/bin/python install -r QwenComfyUI/requirements.txt huggingface-hub pillow
+        touch qwen-env/.ready
+      fi
+      shift
+      qwen-env/bin/python qwen_stills.py "$@"
+      exit 0
+    fi
     if [ ! -e image-env/.ready ]; then
       python -m venv --without-pip --system-site-packages image-env
       python -m pip --python image-env/bin/python install diffusers==0.42.1 transformers==5.22.1 accelerate==1.15.0 pillow==13.0.0 protobuf==7.36.2 sentencepiece==0.2.3 huggingface-hub==2.4.0

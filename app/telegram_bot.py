@@ -172,7 +172,7 @@ def production_setup_text():
         tools.append("FFmpeg/FFprobe")
     from . import raghu_narration, raghu_pipeline
     assets = []
-    if not raghu_pipeline.opening_path().is_file():
+    if not raghu_narration.silent() and not raghu_pipeline.opening_path().is_file():
         assets.append("intro/disclaimer video")
     if raghu_narration.uses_clone():
         try:

@@ -69,6 +69,14 @@ This reuses the exact stills, motion prompts, seeds and frame counts from Raghu.
 
 ## One-image production checks
 
+### Qwen image and silent-video test
+
+Set `RAGHU_IMAGE_MODEL=qwen2511` to use Qwen-Image-Edit-2511 through a pinned ComfyUI worker. It downloads the 30.2 GB FP8 package with its text encoder and VAE, uses 40 editing steps, and saves 1536×864 scene images. Scene references contain the background and up to two characters. Character sheets start from a neutral canvas. Style-only pictures containing unrelated people are excluded from scene reference inputs.
+
+Set `RAGHU_NARRATION_PROVIDER=none` for a silent test. It skips voice generation and its model download, ignores saved speech, and omits the intro and synthesized music. LTX then contributes one five-second moving clip per scene. Choose **Generate → Other → 30 seconds** for six clips. No AI visual reviewer is used.
+
+Qwen inference has not yet been benchmarked on the rental. The worker is configured for the first GPU test, and the actual generation time, quality and bill must be measured on that test. Both Qwen and the current LTX files total about 101.3 GB on disk. They run sequentially on the GPU.
+
 - `/raghu_image` rents Vast, generates one still, checks that its file is readable, verifies Vast teardown, then sends the original PNG to Telegram.
 - `/raghu_motion` starts a separate rental, generates one new still and one five-second LTX shot, copies and verifies the saved files, and destroys the rental before Telegram delivery.
 - These checks bypass DeepSeek and narration. They require Telegram, Vast and SSH settings. The motion check also needs the Hugging Face token.

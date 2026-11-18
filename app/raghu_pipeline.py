@@ -17,7 +17,7 @@ from PIL import Image
 from . import media, raghu_narration, store
 from .raghu_sound import render_cues
 from .raghu_services import ASSETS, STYLE, GeminiUnavailable, choose_title, narrate, plan, required, review_continuity, review_motion, review_still, rewrite_still_prompt
-from .raghu_vast import VastConnectionLost, motion_model, rent, uses_ending_image
+from .raghu_vast import VastConnectionLost, image_model, motion_model, rent, uses_ending_image
 
 FRAMES = 121
 FPS = 24
@@ -58,6 +58,7 @@ FLAT_STYLE = ("Every frame must be hand-drawn-looking 2D ink and matte flat cel 
 
 
 def production_credentials():
+    image_model()
     for name in ("DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "VAST_API_KEY",
                  "RAGHU_MAX_HOURLY_USD", "RAGHU_MAX_JOB_USD"):
         required(name)
@@ -148,6 +149,18 @@ def still_batches(plan):
                 strict_opening=True,
                 max_retakes=2,
             )
+            if image_model() == "qwen2511":
+                if len(visible_at_opening) > 2:
+                    raise RuntimeError("This Qwen workflow supports at most two visible characters per image.")
+                identities = " ".join(
+                    f"{tag}: {next(asset for asset in plan['cast'] if asset['tag'] == tag).get('identity_description', wardrobe[tag]).split(' Neutral full-body', 1)[0]}"
+                    for tag in visible_at_opening
+                )
+                item["prompt"] = (
+                    f"Compose this shot using exactly these {len(visible_at_opening)} characters: {identities}. "
+                    "Keep body parts connected to their owner. Preserve the stated framing and show only "
+                    "the body parts required by a close insert. " + item["prompt"]
+                )
             if not shot.get("simple_prompt"):
                 composition = f"Opening composition: {frame}.{camera} Show this exact instant before the action."
                 item.update(
@@ -1079,6 +1092,8 @@ def render_motion_queue(remote, folder, shots, successors, check, progress):
     return blocked
 
 def narration(folder, shots, check, progress):
+    if raghu_narration.silent():
+        return
     if raghu_narration.uses_clone():
         if raghu_narration.pending_clone(folder, shots):
             raise RuntimeError("Some cloned narrator lines are missing. Retry the saved narration stage.")
@@ -1147,6 +1162,8 @@ def edit(folder, shot_plan, check, *, music=True, opening=False):
             else:
                 speech_folder = audio_folder
             speech = speech_folder / f"narration-{ident}.wav"
+            if raghu_narration.silent():
+                speech = scratch / f"no-narration-{ident}.wav"
             trimmed = scratch / f"voice-{ident}.wav"
             if speech.exists():
                 media.ff("-i", speech, "-af", "silenceremove=start_periods=1:start_duration=0.03:start_threshold=-48dB,areverse,silenceremove=start_periods=1:start_duration=0.06:start_threshold=-48dB,areverse", trimmed)
@@ -1276,7 +1293,7 @@ def work(ident, folder, request, check, progress):
         if shutil.disk_usage(folder).free + saved_bytes < required_bytes:
             raise RuntimeError("Railway needs more free persistent storage for this film. No GPU was rented.")
         intro = opening_path()
-        if not intro.is_file() or media.duration(intro) < 6:
+        if not raghu_narration.silent() and (not intro.is_file() or media.duration(intro) < 6):
             raise RuntimeError("Install the intro and disclaimer as a video of at least six seconds. No GPU was rented.")
     legacy_plan = folder / "raghu-plan.json"
     recover_legacy = saved is None and os.getenv("RAGHU_FINISH_FROM_SAVED") == ident and legacy_plan.is_file()
@@ -1345,10 +1362,12 @@ def work(ident, folder, request, check, progress):
         logging.warning("Saved edit recovery used starting images for shots: %s", ", ".join(fallback) or "none")
     else:
         generate(folder, ident, shot_plan, check, progress)
-    progress("Vast closed. Generating Hindi narration", 80)
+    progress("Vast closed · preparing silent video" if raghu_narration.silent()
+             else "Vast closed. Generating Hindi narration", 80)
     narration(folder, shot_plan["shots"], check, progress)
-    progress("Editing picture to narration and mixing original horror ambience", 90)
-    edit(folder, shot_plan, check, opening=True)
+    progress("Editing the silent video" if raghu_narration.silent()
+             else "Editing picture to narration and mixing original horror ambience", 90)
+    edit(folder, shot_plan, check, opening=not raghu_narration.silent(), music=not raghu_narration.silent())
     logging.warning("Finished saved production %s", ident)
 
 def smoke(ident, folder, mode, check, progress):

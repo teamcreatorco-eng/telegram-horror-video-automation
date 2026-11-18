@@ -1,6 +1,7 @@
 """Budgeted Vast lease and SSH asset transport for the Raghu worker."""
 import base64
 import json
+import ssl
 import os
 import shlex
 import subprocess
@@ -24,6 +25,13 @@ def motion_model():
     model = os.getenv("RAGHU_MOTION_MODEL", "ltx")
     if model not in ("wan22", "ltx"):
         raise RuntimeError("RAGHU_MOTION_MODEL must be wan22 or ltx.")
+    return model
+
+
+def image_model():
+    model = os.getenv("RAGHU_IMAGE_MODEL", "flux")
+    if model not in ("flux", "qwen2511"):
+        raise RuntimeError("RAGHU_IMAGE_MODEL must be flux or qwen2511.")
     return model
 
 
@@ -64,7 +72,14 @@ def vast(*args):
         raise RuntimeError("Vast operation failed: " + " ".join(args[:2])) from None
 
 def instances():
-    result = vast("show", "instances")
+    try:
+        with httpx.Client(verify=ssl.create_default_context(), timeout=20) as client:
+            response = client.get("https://console.vast.ai/api/v1/instances/",
+                                  headers={"Authorization": "Bearer " + required("VAST_API_KEY")})
+            response.raise_for_status()
+            result = response.json()
+    except (httpx.HTTPError, ValueError):
+        raise RuntimeError("Vast instance status could not be read.") from None
     return result if isinstance(result, list) else result["instances"]
 
 def instance_stopped(row):
@@ -396,6 +411,7 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
     journal = folder / "raghu-rental.json"
     previous = store.read(journal) if journal.exists() else {}
     model = motion_model()
+    still_model = image_model()
     recovery = folder / "vast-preserve-and-replace.json"
     recovery_state = store.read(recovery) if recovery.is_file() else {}
     replacement_for = recovery_state.get("replace_instance")
@@ -417,6 +433,8 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
         if previous.get("motion_model", "ltx") != model:
             raise RuntimeError("The preserved rental uses a different motion model. Its disk is still saved. "
                                "Start a new Telegram production to use the deployed model.")
+        if previous.get("image_model", "flux") != still_model:
+            raise RuntimeError("The saved rental uses a different image model. Start a new Telegram production.")
         with tempfile.TemporaryDirectory(prefix="raghu-ssh-") as directory:
             temp = Path(directory)
             key = Path(os.environ["VAST_SSH_KEY_PATH"]).resolve() if os.getenv("VAST_SSH_KEY_PATH") else temp / "id_ed25519"
@@ -467,7 +485,9 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
     # This estimate only screens offers. It is never a deadline for a running job.
     shots = 0 if image_only else (1 if pending_shots is None else pending_shots)
     estimate_minutes = 25 + (shots * 8 if model == "wan22" else (shots * 7 + 5) // 6)
-    download_gb = 20 if image_only else (65 if model == "wan22" else 20 + sum(item["bytes"] for item in models) / 1e9)
+    image_gb = (sum(item["bytes"] for item in store.read(ASSETS / "qwen-model-manifest.json")) / 1e9
+                if still_model == "qwen2511" else 20)
+    download_gb = image_gb + (0 if image_only else 65 if model == "wan22" else sum(item["bytes"] for item in models) / 1e9)
     if not image_only and os.getenv("RAGHU_NARRATION_PROVIDER", "").lower() == "chatterbox":
         download_gb += 4
     max_hourly = float(required("RAGHU_MAX_HOURLY_USD"))
@@ -540,7 +560,7 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
             raise RuntimeError(f"Vast has ${credit:.2f} credit. The lowest eligible rental needs about ${quote(offer):.2f}.")
         started = time.time()
         state.update(rate=offer["dph_total"], gpu=gpu, quantization=quantization, motion_model=model,
-                     offer_id=offer["id"], machine_id=offer.get("machine_id"), started=started)
+                     image_model=still_model, offer_id=offer["id"], machine_id=offer.get("machine_id"), started=started)
         check()
         store.save(journal, state)
         try:
@@ -607,10 +627,12 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
             model_file = temp / "model-manifest.json"
             store.save(model_file, models)
             runtime = temp / "runtime.sh"
-            runtime.write_text(f"export LTX_QUANTIZATION={quantization}\nexport RAGHU_MOTION_MODEL={model}\n",
+            runtime.write_text(f"export LTX_QUANTIZATION={quantization}\nexport RAGHU_MOTION_MODEL={model}\n"
+                               f"export RAGHU_IMAGE_MODEL={still_model}\n",
                                encoding="ascii", newline="\n")
             remote.push([worker, model_file, runtime, *[ASSETS / name for name in ("common.py", "stills.py", "videos.py",
                 "download_video_only.py", "wan_worker.py", "wan_setup.py",
+                "qwen_stills.py", "qwen-model-manifest.json",
                 "style-wide.jpg", "style-interior.jpg")]])
             if hf_token:
                 hf = temp / ".env"

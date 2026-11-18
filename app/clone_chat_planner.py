@@ -8,6 +8,7 @@ import httpx
 from pydantic import Field
 
 from . import raghu_services, store, youtube_clone_writer
+from .raghu_vast import image_model
 from .youtube_clone.pipeline import planning_writer
 
 
@@ -56,6 +57,8 @@ class DeepSeekWriter:
         self.check()
         writing_story = "the exact title is the only story input" in prompt
         if writing_story:
+            if image_model() == "qwen2511":
+                prompt += "\nUse at most two adult characters in this story and at most two people in any shot."
             prompt += "\n" + youtube_clone_writer.setting_direction(self.folder)
             prompt += (
                 "\nEach line must work as one five-second shot. Before returning the script, silently trace "
