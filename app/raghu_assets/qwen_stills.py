@@ -62,10 +62,10 @@ def api(path, payload=None):
         raise RuntimeError(f"Qwen worker rejected {path}: {exc.read().decode(errors='replace')[:500]}") from None
 
 
-def download_models():
+def download_models(manifest="qwen-model-manifest.json"):
     from huggingface_hub import hf_hub_download
 
-    for item in json.loads((ROOT / "qwen-model-manifest.json").read_text()):
+    for item in json.loads((ROOT / manifest).read_text()):
         started = time.monotonic()
         target = COMFY / "models" / Path(item["file"]).relative_to("split_files")
         if not target.is_file() or target.stat().st_size != item["bytes"]:

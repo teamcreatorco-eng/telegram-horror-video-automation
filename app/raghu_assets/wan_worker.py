@@ -12,6 +12,7 @@ from common import ROOT, RESULTS, event
 
 COMFY = ROOT / "ComfyUI"
 URL = "http://127.0.0.1:8188"
+MODEL = "wan2.2-a14b-fp8"
 
 
 def node(kind, **inputs):
@@ -65,12 +66,12 @@ def render(plan):
             raise ValueError("Invalid Wan motion source.")
         if "ending_image_file" in shot or "ending_frame" in shot:
             raise ValueError("Wan motion accepts a single opening image.")
-        prefix = f"wan-{ident}-{uuid.uuid4().hex}"
+        prefix = f"{MODEL}-{ident}-{uuid.uuid4().hex}"
         image_name = prefix + ".png"
         staged_input = COMFY / "input" / image_name
         shutil.copyfile(source, staged_input)
         start = time.monotonic()
-        event("video_start", id=ident, model="wan2.2-a14b-fp8", source_image=source.name,
+        event("video_start", id=ident, model=MODEL, source_image=source.name,
               source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(), seed=shot["seed"],
               frames=shot["frames"], fps=shot["fps"])
         try:

@@ -84,3 +84,20 @@ Qwen inference has not yet been benchmarked on the rental. The worker is configu
 ## AI visual review is disabled
 
 The retired `/image_review` and `/raghu_review_check` commands report that visual review is disabled. They make no reviewer requests and queue no jobs. Generated images proceed to animation after technical file checks. Character, pose, composition and motion defects can therefore appear in the final output.
+
+### HunyuanVideo-1.5 silent motion test
+
+Set `RAGHU_MOTION_MODEL=hunyuan15`, `RAGHU_IMAGE_MODEL=qwen2511`,
+`RAGHU_NARRATION_PROVIDER=none`, and choose Generate → Other → 30 seconds.
+This makes six single-opening-image clips (121 frames, 24 fps, 1280×720),
+then trims and stitches a silent 30-second export. No ending image or AI visual
+reviewer is used. The motion worker follows Comfy-Org's official Hunyuan 1.5
+720p I2V template: FP16 diffusion weights, Euler/simple, 20 steps, CFG 6,
+shift 7, with tiled VAE decoding and low-VRAM loading. This is the template's
+20-step test preset, not a measured speed or quality guarantee.
+
+Pinned manifests verify downloads by SHA256. The 9.38 GB Qwen text encoder
+is shared between image and motion workers; combined distinct model weights
+are approximately 50.6 GB. No LTX weights or HF token are required for this
+public Hunyuan path. Setup and per-clip elapsed times are recorded in
+`events.jsonl`. Hunyuan GPU speed and cost have not been benchmarked here.

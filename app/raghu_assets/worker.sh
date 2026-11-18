@@ -7,9 +7,7 @@ fi
 export HF_HOME="$PWD/hf-cache" HF_HUB_DISABLE_XET=1 HF_HUB_DISABLE_TELEMETRY=1
 export HF_HUB_DISABLE_PROGRESS_BARS=1 TOKENIZERS_PARALLELISM=false PIP_NO_CACHE_DIR=1
 export PYTHONUNBUFFERED=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True OMP_NUM_THREADS=8
-case "$1" in
-  stills)
-    if [ "${RAGHU_IMAGE_MODEL:-flux}" = qwen2511 ]; then
+ensure_comfy() {
       if [ ! -f qwen-env/.ready ]; then
         if ! command -v git >/dev/null; then
           apt-get update -qq
@@ -23,6 +21,11 @@ case "$1" in
         python -m pip --python qwen-env/bin/python install -r QwenComfyUI/requirements.txt huggingface-hub pillow
         touch qwen-env/.ready
       fi
+}
+case "$1" in
+  stills)
+    if [ "${RAGHU_IMAGE_MODEL:-flux}" = qwen2511 ]; then
+      ensure_comfy
       shift
       qwen-env/bin/python qwen_stills.py "$@"
       exit 0
@@ -53,6 +56,30 @@ case "$1" in
     voice-env/bin/python voice_clone.py "$2"
     ;;
   prepare-motion|motion)
+    if [ "${RAGHU_MOTION_MODEL:-ltx}" = hunyuan15 ]; then
+      ensure_comfy
+      if [ ! -f qwen-env/.hunyuan-ready ]; then
+        qwen-env/bin/python hunyuan_worker.py --setup
+        touch qwen-env/.hunyuan-ready
+      fi
+      if [ "$1" = motion ]; then
+        qwen-env/bin/python QwenComfyUI/main.py --listen 127.0.0.1 --port 8188 --lowvram --disable-auto-launch >results/comfy.log 2>&1 &
+        server_pid=$!
+        trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+        for wait_step in $(seq 1 120); do
+          if curl -fsS --max-time 2 http://127.0.0.1:8188/system_stats >/dev/null 2>&1; then break; fi
+          kill -0 "$server_pid"
+          sleep 1
+        done
+        curl -fsS --max-time 5 http://127.0.0.1:8188/system_stats >/dev/null
+        if [ "${RAGHU_WATCH:-0}" = 1 ]; then
+          qwen-env/bin/python hunyuan_worker.py
+        else
+          qwen-env/bin/python hunyuan_worker.py render-plan.json
+        fi
+      fi
+      exit 0
+    fi
     if [ "${RAGHU_MOTION_MODEL:-ltx}" = wan22 ]; then
       if [ ! -f wan-env/.ready ]; then
         if ! command -v git >/dev/null; then

@@ -23,8 +23,8 @@ NVFP4_CHECKPOINT = "diffusion_models/ltx-2.5-22b-distilled-transformer-nvfp4.saf
 
 def motion_model():
     model = os.getenv("RAGHU_MOTION_MODEL", "ltx")
-    if model not in ("wan22", "ltx"):
-        raise RuntimeError("RAGHU_MOTION_MODEL must be wan22 or ltx.")
+    if model not in ("wan22", "ltx", "hunyuan15"):
+        raise RuntimeError("RAGHU_MOTION_MODEL must be wan22, ltx or hunyuan15.")
     return model
 
 
@@ -364,7 +364,7 @@ class Remote:
                    "& echo $! > setup-motion.pid; }", 30)
 
     def wait_motion_setup(self):
-        marker = "wan-env/.ready" if motion_model() == "wan22" else "video-env/.ready"
+        marker = {"wan22": "wan-env/.ready", "hunyuan15": "qwen-env/.hunyuan-ready", "ltx": "video-env/.ready"}[motion_model()]
         self.phase(f"while [ ! -f {marker} ]; do "
                    "ps -p $(cat setup-motion.pid) -o stat= | grep -q '^[^Z]' || exit 1; sleep 2; done", 1800)
 
@@ -478,16 +478,23 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
     quantization = os.getenv("RAGHU_QUANTIZATION", "fp8")
     if quantization not in ("nvfp4", "fp8") or (quantization == "nvfp4" and gpu != "RTX_5090"):
         raise RuntimeError("Use RTX_5090 for the approved NVFP4 configuration.")
-    models = [] if model == "wan22" else model_manifest(quantization)
-    hf_token = None if image_only or model == "wan22" else required("HF_TOKEN")
+    models = [] if model != "ltx" else model_manifest(quantization)
+    hf_token = None if image_only or model != "ltx" else required("HF_TOKEN")
     if hf_token:
         check_model_access(models, hf_token)
     # This estimate only screens offers. It is never a deadline for a running job.
     shots = 0 if image_only else (1 if pending_shots is None else pending_shots)
-    estimate_minutes = 25 + (shots * 8 if model == "wan22" else (shots * 7 + 5) // 6)
+    estimate_minutes = 25 + (shots * 8 if model != "ltx" else (shots * 7 + 5) // 6)
     image_gb = (sum(item["bytes"] for item in store.read(ASSETS / "qwen-model-manifest.json")) / 1e9
                 if still_model == "qwen2511" else 20)
-    download_gb = image_gb + (0 if image_only else 65 if model == "wan22" else sum(item["bytes"] for item in models) / 1e9)
+    if model == "hunyuan15":
+        image_files = store.read(ASSETS / "qwen-model-manifest.json") if still_model == "qwen2511" else []
+        shared = {item["sha256"] for item in image_files}
+        motion_gb = sum(item["bytes"] for item in store.read(ASSETS / "hunyuan-model-manifest.json")
+                        if item["sha256"] not in shared) / 1e9
+    else:
+        motion_gb = 65 if model == "wan22" else sum(item["bytes"] for item in models) / 1e9
+    download_gb = image_gb + (0 if image_only else motion_gb)
     if not image_only and os.getenv("RAGHU_NARRATION_PROVIDER", "").lower() == "chatterbox":
         download_gb += 4
     max_hourly = float(required("RAGHU_MAX_HOURLY_USD"))
@@ -632,7 +639,7 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
                                encoding="ascii", newline="\n")
             remote.push([worker, model_file, runtime, *[ASSETS / name for name in ("common.py", "stills.py", "videos.py",
                 "download_video_only.py", "wan_worker.py", "wan_setup.py",
-                "qwen_stills.py", "qwen-model-manifest.json",
+                "qwen_stills.py", "qwen-model-manifest.json", "hunyuan_worker.py", "hunyuan-model-manifest.json",
                 "style-wide.jpg", "style-interior.jpg")]])
             if hf_token:
                 hf = temp / ".env"

@@ -1,0 +1,37 @@
+[
+  {
+    "repo": "Comfy-Org/Hunyuan-Video-1.5",
+    "revision": "1405a2b738c29b890cf6d03fc038d8d3e92eeed7",
+    "file": "split_files/clip_vision/sigclip_vision_patch14_384.safetensors",
+    "bytes": 856505640,
+    "sha256": "1fee501deabac72f0ed17610307d7131e3e9d1e838d0363aa3c2b97a6e03fb33"
+  },
+  {
+    "repo": "Comfy-Org/Hunyuan-Video-1.5",
+    "revision": "1405a2b738c29b890cf6d03fc038d8d3e92eeed7",
+    "file": "split_files/diffusion_models/hunyuanvideo1.5_720p_i2v_fp16.safetensors",
+    "bytes": 16653368128,
+    "sha256": "96883b154e4231e6106515bdef53a091085d5821518c387eb28609fde77e4bf1"
+  },
+  {
+    "repo": "Comfy-Org/Hunyuan-Video-1.5",
+    "revision": "1405a2b738c29b890cf6d03fc038d8d3e92eeed7",
+    "file": "split_files/text_encoders/byt5_small_glyphxl_fp16.safetensors",
+    "bytes": 438643184,
+    "sha256": "516910bb4c9b225370290e40585d1b0e6c8cd3583690f7eec2f7fb593990fb48"
+  },
+  {
+    "repo": "Comfy-Org/Hunyuan-Video-1.5",
+    "revision": "1405a2b738c29b890cf6d03fc038d8d3e92eeed7",
+    "file": "split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+    "bytes": 9384670680,
+    "sha256": "cb5636d852a0ea6a9075ab1bef496c0db7aef13c02350571e388aea959c5c0b4"
+  },
+  {
+    "repo": "Comfy-Org/Hunyuan-Video-1.5",
+    "revision": "1405a2b738c29b890cf6d03fc038d8d3e92eeed7",
+    "file": "split_files/vae/hunyuanvideo15_vae_fp16.safetensors",
+    "bytes": 2521292758,
+    "sha256": "e7c3091949c27e2d55ae6d5df917b99dadfebbf308e5a50d0ade0d16c90297ae"
+  }
+]

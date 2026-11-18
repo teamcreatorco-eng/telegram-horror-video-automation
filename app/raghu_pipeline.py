@@ -575,7 +575,7 @@ def validate_motion(folder, shot, next_shot=None):
                 return saved
         try:
             stream = next(s for s in media.probe(clip)["streams"] if s["codec_type"] == "video")
-            expected = (WAN_FRAMES, 848, 480) if wan else (FRAMES, 1280, 768)
+            expected = (WAN_FRAMES, 848, 480) if wan else (FRAMES, 1280, 720 if motion_model() == "hunyuan15" else 768)
             if (int(stream.get("nb_frames", "0")), stream["width"], stream["height"]) != expected:
                 raise RuntimeError("Unexpected frame count or dimensions.")
             subprocess.run(["ffmpeg", "-v", "error", "-xerror", "-threads", "2", "-i", str(clip),
@@ -597,7 +597,7 @@ def validate_motion(folder, shot, next_shot=None):
             sheet = Path(tmp) / "frames.jpg"
             result = media.probe(clip)
             stream = next(s for s in result["streams"] if s["codec_type"] == "video")
-            expected = (WAN_FRAMES, 848, 480) if wan else (FRAMES, 1280, 768)
+            expected = (WAN_FRAMES, 848, 480) if wan else (FRAMES, 1280, 720 if motion_model() == "hunyuan15" else 768)
             if (int(stream.get("nb_frames", "0")), stream["width"], stream["height"]) != expected:
                 raise RuntimeError("Unexpected frame count or dimensions.")
             scan = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-v", "info", "-xerror",
@@ -895,7 +895,7 @@ def animate_stills(remote, folder, missing, successors, check, progress):
     model = motion_model()
     if uses_ending_image():
         prepare_ending_frames(remote, folder, missing, successors, check, progress, approved)
-    model_name = "Wan 2.2" if model == "wan22" else "LTX-2.5"
+    model_name = {"wan22": "Wan 2.2", "hunyuan15": "HunyuanVideo-1.5", "ltx": "LTX-2.5"}[model]
     progress(f"Preparing {model_name} motion weights", 54)
     remote.start_motion_setup()
     remote.wait_motion_setup()
@@ -981,7 +981,7 @@ def render_motion_queue(remote, folder, shots, successors, check, progress):
             clip = f"shot-{shot['id']}.mp4"
             remote.phase(f"while [ ! -s results/{clip} ]; do "
                          "ps -p $(cat motion.pid) -o stat= | grep -q '^[^Z]' || exit 1; "
-                         "sleep 2; done", 900 if motion_model() == "wan22" else 600)
+                         "sleep 2; done", 1800 if motion_model() == "hunyuan15" else 900 if motion_model() == "wan22" else 600)
             remote.pull([clip], folder)
             reviews.append(pool.submit(validate_motion, folder, shot, successors.get(shot["id"])))
             if index == 0 and on_started is not None:
@@ -1190,7 +1190,7 @@ def edit(folder, shot_plan, check, *, music=True, opening=False):
                 length = available
                 speed = max(.93, spoken / max(.2, length - .20))
             video_filter = "setsar=1,fps=24"
-            if wan:
+            if wan or motion_model() == "hunyuan15":
                 video_filter = ("scale=1280:768:force_original_aspect_ratio=decrease:force_divisible_by=2,"
                                 "pad=1280:768:(ow-iw)/2:(oh-ih)/2," + video_filter)
             if speed > (1.35 if approved_cadence else 1.18):
