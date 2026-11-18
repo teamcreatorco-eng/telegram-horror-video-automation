@@ -97,3 +97,52 @@ def test_production_can_resume_an_expired_legacy_rental(monkeypatch, tmp_path):
     with vast.rent(tmp_path, "job", lambda: None) as remote:
         assert remote.deadline == float("inf")
         assert "expires" not in store.read(journal)
+
+
+def test_cleanup_failure_does_not_hide_original_generation_error(monkeypatch, tmp_path):
+    journal = tmp_path / "raghu-rental.json"
+    store.save(journal, {"id": 42})
+    def fail(*args):
+        raise RuntimeError("Stop confirmation unavailable")
+    monkeypatch.setattr(vast, "close_rental", fail)
+    with pytest.raises(vast.VastStartupError, match="authentication"):
+        try:
+            raise vast.VastStartupError("SSH key authentication failed")
+        finally:
+            vast.finish_rental(journal, True)
+    saved = store.read(journal)
+    assert "authentication" in saved["original_error"]
+    assert saved["cleanup_error"] == "Stop confirmation unavailable"
+
+
+def test_missing_contract_does_not_report_unconfirmed_stop(monkeypatch, tmp_path):
+    journal = tmp_path / "raghu-rental.json"
+    store.save(journal, {"id": 42, "label": "job", "destroyed": False})
+    monkeypatch.setattr(vast, "instances", lambda: [])
+    vast.close_rental(journal, True)
+    assert store.read(journal)["destroyed"]
+    assert not store.read(journal)["recovery_stop"]
+
+
+def test_key_registration_is_verified_before_rental(monkeypatch):
+    calls = []
+    registered = []
+    class Response:
+        def raise_for_status(self): pass
+        def json(self): return registered.copy()
+    class Client:
+        def __init__(self, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url):
+            calls.append("get")
+            return Response()
+        def post(self, url, json):
+            calls.append("register")
+            registered.append({"public_key": json["ssh_key"]})
+            return Response()
+    monkeypatch.setattr(vast, "required", lambda name: "test")
+    monkeypatch.setattr(vast.httpx, "Client", Client)
+    vast.ensure_ssh_key("ssh-ed25519 public")
+    vast.ensure_ssh_key("ssh-ed25519 public")
+    assert calls == ["get", "register", "get", "get"]

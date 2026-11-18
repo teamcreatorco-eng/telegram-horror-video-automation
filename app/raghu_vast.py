@@ -3,6 +3,7 @@ import base64
 import json
 import logging
 import ssl
+import sys
 import os
 import shlex
 import subprocess
@@ -98,6 +99,47 @@ def instance_stopped(row):
         row.get("actual_status") == "exited" and row.get("intended_status") == "stopped")
 
 
+def ensure_ssh_key(public_key):
+    """Register the derived public key before billing starts, independently of onstart."""
+    def matches(rows):
+        if isinstance(rows, dict):
+            rows = rows.get("ssh_keys", rows.get("keys", []))
+        if isinstance(rows, str):
+            rows = json.loads(rows)
+        return any(" ".join(row.get("public_key", row.get("ssh_key", "")).split()[:2]) == public_key
+                   for row in rows)
+    try:
+        with httpx.Client(verify=ssl.create_default_context(), timeout=20,
+                          headers={"Authorization": "Bearer " + required("VAST_API_KEY")}) as client:
+            url = "https://console.vast.ai/api/v0/ssh/"
+            response = client.get(url)
+            response.raise_for_status()
+            if matches(response.json()):
+                return
+            response = client.post(url, json={"ssh_key": public_key})
+            response.raise_for_status()
+            response = client.get(url)
+            response.raise_for_status()
+            if not matches(response.json()):
+                raise ValueError("Registered key was not returned")
+    except (httpx.HTTPError, ValueError, TypeError):
+        raise RuntimeError("Vast SSH key registration could not be verified. No GPU was rented.") from None
+
+
+def finish_rental(journal, preserve):
+    """Keep the generation failure visible when the provider also fails cleanup."""
+    original = sys.exc_info()[1]
+    try:
+        close_rental(journal, preserve)
+    except Exception as cleanup_error:
+        if original is None:
+            raise
+        state = store.read(journal)
+        store.save(journal, {**state, "cleanup_error": str(cleanup_error), "original_error": str(original)})
+        logging.exception("Rental cleanup also failed; preserving original production error")
+        original.add_note("Rental cleanup also failed: " + str(cleanup_error))
+
+
 def stopped_failed_start(row):
     return (all(row.get(key) == "stopped" for key in ("cur_state", "next_state", "intended_status"))
             and row.get("actual_status") in ("loading", "exited", "offline", "stopped", "inactive")
@@ -118,7 +160,9 @@ def close_rental(journal, preserve):
     if row is None:
         if not state.get("id"):
             return
-        raise RuntimeError("Vast could not confirm the preserved rental. Check its state before resuming.")
+        store.save(journal, {**state, "destroyed": True, "recovery_stop": False,
+                             "missing_at": time.time()})
+        return
     if not state.get("id"):
         store.save(journal, {**state, "id": row["id"], "recovery_stop": True})
     if not (instance_stopped(row) or stopped_failed_start(row)):
@@ -128,7 +172,9 @@ def close_rental(journal, preserve):
             if row and (instance_stopped(row) or stopped_failed_start(row)):
                 return
             if not row:
-                break
+                store.save(journal, {**state, "destroyed": True, "recovery_stop": False,
+                                     "missing_at": time.time()})
+                return
             time.sleep(3)
         raise RuntimeError("Vast received the stop request but has not confirmed the rental is stopped.")
 
@@ -387,7 +433,7 @@ def rent(folder, ident, check, *, progress=None, **options):
     recover = store.read(recovery) if recovery.is_file() else {}
     if recover.get("user_recovery") and journal.is_file():
         previous = store.read(journal)
-        if previous.get("startup_failure") and previous.get("recovery_stop") and not previous.get("ssh_ready_seconds"):
+        if previous.get("startup_failure") and previous.get("recovery_stop") and not previous.get("destroyed") and not previous.get("ssh_ready_seconds"):
             if previous["startup_failure"] in {"SSH key authentication failed", "SSH host identity check failed"}:
                 raise RuntimeError("Vast SSH settings need an administrator to fix the key or host identity.")
             store.save(recovery, {**recover, "replace_instance": previous["id"]})
@@ -481,7 +527,7 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
                 remote.push([ASSETS / "stills.py"])
                 yield remote
             finally:
-                close_rental(journal, recovery.is_file())
+                finish_rental(journal, recovery.is_file())
         return
     if previous and not previous.get("destroyed") and not replace_failed_host:
         destroy(journal)
@@ -524,6 +570,7 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
             key.chmod(0o600)
         pub = subprocess.check_output(["ssh-keygen", "-y", "-f", str(key)],
                                       stderr=subprocess.DEVNULL, timeout=10).split()
+        ensure_ssh_key(b" ".join(pub[:2]).decode("ascii"))
         encoded = base64.b64encode(b" ".join(pub[:2]) + b"\n").decode()
         start = temp / "onstart.sh"
         start.write_text(f"install -d -m 700 /root/.ssh\nprintf %s {encoded} | base64 -d >> /root/.ssh/authorized_keys\nchmod 600 /root/.ssh/authorized_keys\n", encoding="ascii")
@@ -668,4 +715,4 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
                         pass
                 raise
         finally:
-            close_rental(journal, recovery.is_file())
+            finish_rental(journal, recovery.is_file())
