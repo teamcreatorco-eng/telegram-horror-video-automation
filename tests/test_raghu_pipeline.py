@@ -840,6 +840,7 @@ def test_review_outage_parks_gpu_while_retrying_saved_work(monkeypatch, tmp_path
 
 def test_vast_recovery_stops_and_restarts_same_rental(monkeypatch, tmp_path):
     from app import raghu_vast as vast
+    monkeypatch.setattr(vast, "require_resume_credit", lambda: None)
 
     now = [0]
     status = ["running"]

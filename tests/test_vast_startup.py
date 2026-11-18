@@ -168,3 +168,25 @@ def test_vast_rejection_exposes_reason_and_redacts_api_key(monkeypatch):
         vast.vast("create", "instance", "42")
     assert "private-test-token" not in str(error.value)
     assert "[redacted]" in str(error.value)
+
+
+def test_empty_balance_explains_connection_loss_without_starting_gpu(monkeypatch):
+    monkeypatch.setattr(vast, "vast", lambda *args: {"credit": 0})
+    with pytest.raises(RuntimeError, match=r"Vast balance is \$0"):
+        vast.explain_connection_loss(vast.VastConnectionLost("Connection closed"))
+
+
+def test_funded_connection_loss_remains_a_transport_error(monkeypatch):
+    monkeypatch.setattr(vast, "vast", lambda *args: {"user": {"credit": 2}})
+    error = vast.VastConnectionLost("Connection closed")
+    assert vast.explain_connection_loss(error) is error
+
+
+def test_empty_credit_blocks_preserved_restart_before_any_mutation(monkeypatch, tmp_path):
+    monkeypatch.setattr(vast, "vast", lambda *args: {"credit": 0})
+    calls = []
+    monkeypatch.setattr(vast, "request_instance_state", lambda *args: calls.append(args))
+    remote = vast.Remote({}, tmp_path / "key", tmp_path, float("inf"), lambda: None, connecting=False)
+    with pytest.raises(RuntimeError, match="Vast balance is"):
+        remote.restart_preserved({"id": 42})
+    assert calls == []

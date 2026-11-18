@@ -818,6 +818,9 @@ def generate(folder, ident, shot_plan, check, progress):
                     return
                 remote.resume_after_review(time.monotonic() - parked_at)
             except (VastConnectionLost, RenderReviewNeedsRetake) as exc:
+                if isinstance(exc, VastConnectionLost):
+                    from .raghu_vast import explain_connection_loss
+                    explain_connection_loss(exc)
                 progress_at(str(exc), phase)
                 if (folder / "vast-preserve-and-replace.json").is_file():
                     raise

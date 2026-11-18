@@ -40,6 +40,25 @@ def check_available_credit(credit, estimated_cost):
         logging.warning("Starting with operator low-balance override: credit $%.2f, estimate $%.2f", credit, estimated_cost)
 
 
+def require_resume_credit():
+    user = vast("show", "user")
+    user = user.get("user", user)
+    if float(user.get("credit", 0)) <= 0:
+        raise RuntimeError("Vast balance is $0. Add credit, then retry this step to reuse the saved images "
+                           "and preserved model disk. The GPU has not been restarted.")
+
+
+def explain_connection_loss(error):
+    """Check funding after an established connection drops, without retrying a rental."""
+    try:
+        require_resume_credit()
+    except RuntimeError as funding_error:
+        if "Vast balance is $0" in str(funding_error):
+            raise funding_error from error
+        logging.warning("Could not check Vast credit after connection loss")
+    return error
+
+
 def image_model():
     model = os.getenv("RAGHU_IMAGE_MODEL", "flux")
     if model not in ("flux", "qwen2511"):
@@ -347,6 +366,7 @@ class Remote:
         self.restart_preserved(state)
 
     def restart_preserved(self, state):
+        require_resume_credit()
         ident = state["id"]
         try:
             request_instance_state("start", ident)
