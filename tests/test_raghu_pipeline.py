@@ -6,6 +6,12 @@ import pytest
 from app import raghu_pipeline, store
 
 
+@pytest.fixture(autouse=True)
+def legacy_visual_review_cases(monkeypatch):
+    # Retain coverage of the old review/recovery helpers without enabling them in production.
+    monkeypatch.setattr(raghu_pipeline, "AI_VISUAL_REVIEW", True)
+
+
 @pytest.mark.parametrize(("repeat_flow_issue", "temporary_failure"), [(False, False), (True, False), (False, True)])
 def test_writer_repairs_flagged_beats_and_reuses_completed_plan(
         monkeypatch, tmp_path, repeat_flow_issue, temporary_failure):

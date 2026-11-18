@@ -158,8 +158,10 @@ def recovery_guidance(reason):
 
 def production_setup_text():
     required = ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_IDS", "DEEPSEEK_API_KEY", "DEEPSEEK_MODEL",
-                "GEMINI_API_KEY", "GEMINI_VISION_MODEL", "VAST_API_KEY",
+                "VAST_API_KEY",
                 "RAGHU_MAX_HOURLY_USD", "RAGHU_MAX_JOB_USD"]
+    if os.getenv("RAGHU_NARRATION_PROVIDER", "gemini").lower() == "gemini":
+        required.append("GEMINI_API_KEY")
     if os.getenv("RAGHU_MOTION_MODEL", "ltx") == "ltx":
         required.append("HF_TOKEN")
     missing = [key for key in required if not os.getenv(key, "").strip()]
@@ -300,18 +302,10 @@ class Service:
                 return
             self.send_images(cid, job)
             return
-        if raghu and command == '/image_review':
-            job = latest(self.bot, cid)
-            if not job:
-                self.api.text(cid, 'No production found.')
-                return
-            filename = text.partition(' ')[2].strip() or ('smoke-image.png' if job['request'].get('raghu_smoke') else 'still-001.png')
-            if not re.fullmatch(r'(?:rejected-)?(?:(?:still|end)-[0-9]{3}|character-[A-Z0-9-]{1,30}|background-[A-Z0-9-]{1,30}|smoke-image)\.png', filename):
-                self.api.text(cid, 'Use a generated image name, for example /image_review still-001.png.')
-                return
-            self.send_image_review(cid, job, filename)
+        if raghu and command in ('/image_review', '/raghu_review_check'):
+            self.api.text(cid, 'AI image and video reviews are disabled. Production continues after file checks.')
             return
-        smoke_mode = {'/raghu_image': 'image', '/raghu_motion': 'motion', '/raghu_review_check': 'review'}.get(command) if raghu else None
+        smoke_mode = {'/raghu_image': 'image', '/raghu_motion': 'motion'}.get(command) if raghu else None
         planning_only = raghu and os.getenv('RAGHU_PLAN_ONLY', '').lower() == 'true'
         if planning_only and smoke_mode in ('image', 'motion'):
             self.api.text(cid, 'Planning-only mode is active. GPU generation is disabled.')
@@ -601,7 +595,8 @@ class Service:
             return
         report = storage.read_json(job['id'], 'raghu-smoke.json')
         decision = report['visual_review']
-        result_text = 'Image review passed' if decision['pass'] else 'Image review rejected the still'
+        result_text = ('Image saved · AI review disabled' if decision.get('review_skipped') else
+                       'Image review passed' if decision['pass'] else 'Image review rejected the still')
         caption = (f"{result_text} in {report['review_seconds']:.1f}s. "
                    f"Image generation {report['image_render_seconds']:.1f}s. Vast closed.\n"
                    + decision['reason'])

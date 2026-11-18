@@ -1,6 +1,6 @@
 # Telegram Horror Video Automation
 
-Send a title or tap **Generate** in Telegram. Choose 2, 5, or 10 minutes, or enter a custom duration. The bot plans a complete Hindi story, creates illustrated scenes on Vast, reviews the motion, clones the narrator from your sample, and delivers the edited video in Telegram.
+Send a title or tap **Generate** in Telegram. Choose 2, 5, or 10 minutes, or enter a custom duration. The bot plans a complete Hindi story, creates illustrated scenes and motion on Vast, clones the narrator from your sample, and delivers the edited video in Telegram. AI image and video review is disabled. Saved media receives technical file checks.
 
 ## Get started
 

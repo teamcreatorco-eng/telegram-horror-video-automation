@@ -80,6 +80,23 @@ def test_raghu_setup_lists_missing_credentials_without_printing_values(service, 
     assert store.all_jobs() == []
 
 
+@pytest.mark.parametrize("command", ["/image_review", "/raghu_review_check"])
+def test_retired_visual_review_commands_do_not_queue_work(service, monkeypatch, command):
+    monkeypatch.setenv("MEDIA_BACKEND", "raghu")
+    service.handle(update(command))
+    assert "AI image and video reviews are disabled" in service.api.calls[-1][1]["text"]
+    assert store.all_jobs() == []
+
+
+def test_chatterbox_setup_does_not_request_a_gemini_review_key(service, monkeypatch):
+    monkeypatch.setenv("MEDIA_BACKEND", "raghu")
+    monkeypatch.setenv("RAGHU_NARRATION_PROVIDER", "chatterbox")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_VISION_MODEL", raising=False)
+    service.handle(update("/setup"))
+    assert "GEMINI" not in service.api.calls[-1][1]["text"]
+
+
 def test_title_routes_once_and_preserves_chat_owner(service):
     service.handle(update());service.handle(update())
     jobs=store.all_jobs();assert len(jobs)==1 and jobs[0]['owner']=='tg_900_101'

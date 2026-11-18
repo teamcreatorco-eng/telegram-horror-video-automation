@@ -12,6 +12,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from PIL import Image
 
 from . import media, raghu_narration, store
 from .raghu_sound import render_cues
@@ -29,6 +30,14 @@ MOTION_REVIEW_VERSION = 4
 MOTION_EVIDENCE_VERSION = 4
 REVIEW_RETRY_SECONDS = 15
 REVIEW_RECOVERY_ATTEMPTS = 3
+AI_VISUAL_REVIEW = False
+
+
+def check_image_file(path):
+    with Image.open(path) as image:
+        image.verify()
+    return {"pass": True, "review_skipped": True, "technical_checks_passed": True,
+            "approval_basis": "readable_image", "reason": "Image saved successfully. AI visual review is disabled."}
 
 
 def opening_path():
@@ -49,9 +58,11 @@ FLAT_STYLE = ("Every frame must be hand-drawn-looking 2D ink and matte flat cel 
 
 
 def production_credentials():
-    for name in ("DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "GEMINI_API_KEY", "GEMINI_VISION_MODEL", "VAST_API_KEY",
+    for name in ("DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "VAST_API_KEY",
                  "RAGHU_MAX_HOURLY_USD", "RAGHU_MAX_JOB_USD"):
         required(name)
+    if os.getenv("RAGHU_NARRATION_PROVIDER", "gemini").lower() == "gemini":
+        required("GEMINI_API_KEY")
     if key_path := os.getenv("VAST_SSH_KEY_PATH"):
         if not Path(key_path).is_file():
             raise RuntimeError("VAST_SSH_KEY_PATH does not point to a readable file.")
@@ -191,6 +202,8 @@ def review_signature(prompt, paths):
 
 def still_pair_checks(folder, shots, check):
     """Review the two compositions and the planned action between them."""
+    if not AI_VISUAL_REVIEW:
+        return {}
     def assess(pair):
         previous, current = pair
         check()
@@ -241,6 +254,11 @@ def manifest(remote, folder, name, value):
 def assess_still(folder, item, check):
     name = item["file"]
     report = folder / (name + ".review.json")
+    if not AI_VISUAL_REVIEW:
+        check()
+        result = check_image_file(folder / name)
+        store.save(report, result)
+        return result
     saved = {}
     strict = item.get("strict_opening", False)
     version = STRICT_OPENING_REVIEW_VERSION if strict else STILL_REVIEW_VERSION
@@ -537,6 +555,27 @@ def validate_motion(folder, shot, next_shot=None):
     clip = folder / f"shot-{ident}.mp4"
     report = folder / f"motion-{ident}.review.json"
     signature = motion_signature(folder, shot, next_shot)
+    if not AI_VISUAL_REVIEW:
+        if signature and report.is_file():
+            saved = store.read(report)
+            if saved.get("signature") == signature and saved.get("review_skipped") and saved.get("technical_checks_passed"):
+                return saved
+        try:
+            stream = next(s for s in media.probe(clip)["streams"] if s["codec_type"] == "video")
+            expected = (WAN_FRAMES, 848, 480) if wan else (FRAMES, 1280, 768)
+            if (int(stream.get("nb_frames", "0")), stream["width"], stream["height"]) != expected:
+                raise RuntimeError("Unexpected frame count or dimensions.")
+            subprocess.run(["ffmpeg", "-v", "error", "-xerror", "-threads", "2", "-i", str(clip),
+                            "-an", "-f", "null", "-"], capture_output=True, timeout=45, check=True)
+            result = {"pass": True, "review_skipped": True, "technical_checks_passed": True,
+                      "approval_basis": "decodable_video", "reason": "Clip saved successfully. AI visual review is disabled."}
+        except (RuntimeError, StopIteration, ValueError, OSError, subprocess.SubprocessError) as error:
+            result = {"pass": False, "review_skipped": True, "technical_checks_passed": False,
+                      "technical_failure": True, "reason": "Video file validation failed. " + str(error)[:240]}
+        result["signature"] = signature
+        result["evidence_version"] = MOTION_EVIDENCE_VERSION
+        store.save(report, result)
+        return result
     if signature and report.exists() and (saved := store.read(report)).get("signature") == signature:
         if saved.get("pass") or saved.get("evidence_version") == MOTION_EVIDENCE_VERSION:
             return saved
@@ -672,6 +711,8 @@ def generate(folder, ident, shot_plan, check, progress):
                 raise RuntimeError(f"Saved starting image is missing: {name}.")
 
     def approved_motion(shot):
+        if not AI_VISUAL_REVIEW and (folder / f"shot-{shot['id']}.mp4").is_file():
+            return validate_motion(folder, shot, successors.get(shot["id"]))["pass"]
         report = folder / f"motion-{shot['id']}.review.json"
         if not report.is_file():
             return False
@@ -774,14 +815,14 @@ def generate(folder, ident, shot_plan, check, progress):
 
 
 def generate_on_rental(remote, folder, canonical, starts, shots, successors, approved_motion, check, progress):
-    progress("Generating and reviewing canonical characters and locations", 28)
+    progress("Generating character and background images", 28)
     rejected = review_stills(remote, folder, canonical, check, lambda message: progress(message, 28))
     if rejected:
         raise RenderReviewNeedsRetake("Character or location references still need correction: " + ", ".join(rejected))
     approved_canon = [folder / t["file"] for t in canonical]
     remote.push(approved_canon)
     remote.phase("mv character-*.png background-*.png results/", 40)
-    progress("Generating and reviewing every starting image", 42)
+    progress("Generating scene starting images", 42)
     rejected = review_stills(remote, folder, starts, check, lambda message: progress(message, 42))
     if rejected:
         if any(item.get("strict_opening") and item["file"] in rejected for item in starts):
@@ -851,7 +892,7 @@ def animate_stills(remote, folder, missing, successors, check, progress):
         if event["stage"] == "model_download":
             logging.warning("%s download %s: %s bytes in %.1fs", model_name,
                             event["file"], event["bytes"], event["seconds"])
-    progress(f"Animating the reviewed opening images with {model_name}", 56)
+    progress(f"Animating the starting images with {model_name}", 56)
     remote.phase("{ nohup env RAGHU_WATCH=1 bash worker.sh motion >results/motion.log 2>&1 </dev/null & echo $! > motion.pid; }", 30)
     blocked = render_motion_queue(remote, folder, missing, successors, check, progress)
     remote.pull(["events.jsonl"], folder)
@@ -863,7 +904,7 @@ def animate_stills(remote, folder, missing, successors, check, progress):
 
 
 def prepare_ending_frames(remote, folder, missing, successors, check, progress, approved):
-    progress("Editing and reviewing each last frame from its approved first frame", 52)
+    progress("Creating ending frames from the starting images", 52)
     endings = end_frame_tasks(missing, folder, successors)
     opening_refs = {f"results/{path.name}" for path in approved}
     destination_refs = sorted({ref.removeprefix("results/") for item in endings for ref in item["refs"]
@@ -955,14 +996,15 @@ def render_motion_queue(remote, folder, shots, successors, check, progress):
         brief = opening_motion_prompt(shot)
         clip = folder / f"shot-{ident}.mp4"
         prompt = brief
-        with tempfile.TemporaryDirectory(dir=folder) as tmp:
-            sheet = Path(tmp) / "frames.jpg"
-            try:
-                media.ff("-i", clip, "-vf", "select='not(mod(n,24))',scale=320:-2,tile=3x2",
-                         "-frames:v", "1", sheet)
-                prompt = rewrite_still_prompt(sheet, brief, reason, motion=True)
-            except (GeminiUnavailable, RuntimeError, subprocess.SubprocessError):
-                logging.warning("Motion prompt rewrite unavailable for shot %s; using the locked action", ident)
+        if AI_VISUAL_REVIEW:
+            with tempfile.TemporaryDirectory(dir=folder) as tmp:
+                sheet = Path(tmp) / "frames.jpg"
+                try:
+                    media.ff("-i", clip, "-vf", "select='not(mod(n,24))',scale=320:-2,tile=3x2",
+                             "-frames:v", "1", sheet)
+                    prompt = rewrite_still_prompt(sheet, brief, reason, motion=True)
+                except (GeminiUnavailable, RuntimeError, subprocess.SubprocessError):
+                    logging.warning("Motion prompt rewrite unavailable for shot %s; using the locked action", ident)
         store.save(path, {"count": count + 1, "round": round_id,
                           "serial": previous.get("serial", 0) + 1, "prompt": prompt})
         archive(shot)
@@ -1017,7 +1059,7 @@ def render_motion_queue(remote, folder, shots, successors, check, progress):
                             blocked.append(f"{shot['id']}: {failed[shot['id']]}")
                 reasons.update(failed)
             complete += len(batch) - len(failed)
-            progress(f"Motion review completed {complete}/{len(shots)} pending shots",
+            progress(f"Motion files saved {complete}/{len(shots)} pending shots",
                      56 + int(22 * complete / len(shots)))
         while retry:
             progress(f"Retaking {len(retry)} flagged motion clips", 56 + int(22 * complete / len(shots)))
@@ -1033,7 +1075,7 @@ def render_motion_queue(remote, folder, shots, successors, check, progress):
                 else:
                     blocked.append(f"{ident}: {reason}")
         if complete or blocked:
-            progress(f"Motion review completed {len(shots)}/{len(shots)} pending shots", 78)
+            progress(f"Motion files saved {len(shots)}/{len(shots)} pending shots", 78)
     return blocked
 
 def narration(folder, shots, check, progress):
@@ -1311,7 +1353,7 @@ def work(ident, folder, request, check, progress):
 
 def smoke(ident, folder, mode, check, progress):
     """Generate exactly one image. Only the motion check can render one clip."""
-    credentials = ["GEMINI_API_KEY", "GEMINI_VISION_MODEL", "VAST_API_KEY", "VAST_SSH_PRIVATE_KEY"]
+    credentials = ["VAST_API_KEY", "VAST_SSH_PRIVATE_KEY"]
     if mode == "motion" and motion_model() == "ltx":
         credentials.append("HF_TOKEN")
     for name in credentials:
@@ -1330,22 +1372,26 @@ def smoke(ident, folder, mode, check, progress):
                 ["style-interior.jpg"], 57300)
     if report_path.exists():
         saved = store.read(report_path)
+        if not AI_VISUAL_REVIEW and image.is_file():
+            saved["visual_review"] = check_image_file(image)
+            saved["review_seconds"] = 0
+            store.save(report_path, saved)
         if (folder / "raghu-rental.json").exists() and store.read(folder / "raghu-rental.json").get("destroyed"):
             if (mode == "image" and image.exists()) or (mode == "motion" and clip.exists()
                     and "clip_render_seconds" in saved
                     and (saved.get("motion_model", "ltx") == motion_model())
                     and (not uses_ending_image() or (folder / end_file(shot)).is_file())):
                 return
-            if not saved["visual_review"]["pass"]:
+            if AI_VISUAL_REVIEW and not saved["visual_review"]["pass"]:
                 raise RuntimeError("The saved smoke-test still was rejected by the vision model.")
     with rent(folder, ident, check, image_only=mode == "image") as remote:
         progress("Vast is generating one Raghu-style test image", 25)
         manifest(remote, folder, "still-tasks.json", [item])
         remote.phase("bash worker.sh stills still-tasks.json >results/stills.log 2>&1", 1200)
         remote.pull([image.name, "events.jsonl"], folder)
-        progress("Railway is analyzing the generated image", 55)
+        progress("Image saved · checking file readability", 55)
         start = time.monotonic()
-        assessment = review_still([image, ASSETS / "style-interior.jpg"],
+        assessment = check_image_file(image) if not AI_VISUAL_REVIEW else review_still([image, ASSETS / "style-interior.jpg"],
             "Railway production quality check. Inspect the first image. The second image is style only. "
             "State the visible person, held object, door position, colors and any concrete image defects "
             "in reason. Fail if the image lacks the single adult, flashlight or closed door, "
@@ -1389,6 +1435,8 @@ def smoke(ident, folder, mode, check, progress):
 
 def review_check(folder, check, progress):
     """Challenge the deployed reviewer using the same real frame with two prompts."""
+    if not AI_VISUAL_REVIEW:
+        raise RuntimeError("AI visual review is disabled. No reviewer test is required.")
     fixture = ASSETS / "review-fixture"
     data = store.read(fixture / "fixture.json")
     frame = fixture / data["image"]

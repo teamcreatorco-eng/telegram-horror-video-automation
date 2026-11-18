@@ -7,13 +7,13 @@ In Codex, say **“Clone this repository”** and paste its GitHub URL. After op
 - **Localhost.** Install Python 3.11, FFmpeg (including FFprobe) and the OpenSSH client. From the repo, run `python -m pip install -r requirements.txt vastai==1.9.1`. Copy `.env.raghu.example` to `.env`. Run `python run.py` after entering credentials and installing the assets. Keep that process and the computer running when you use Telegram. Keep the generated `data/` folder so jobs can resume.
 - **Railway.** In Railway, choose **New Project → Deploy from GitHub Repo** and select your fork. Keep one replica and attach a persistent volume at `/data`. Copy the settings from `.env.raghu.example` into the service’s **Variables** tab. The Docker image installs Python, FFmpeg, OpenSSH and the Vast CLI. [Volumes](https://docs.railway.com/volumes)
 
-Both hosts use the same writer, motion model, review, voice clone and editor. The AI weights are downloaded to the rented Vast GPU host in both modes. Localhost installs the controller and editing tools on your computer.
+Both hosts use the same writer, motion model, voice clone and editor. AI image and video reviewers are disabled. Generated files are checked for readability before use. The AI weights are downloaded to the rented Vast GPU host in both modes. Localhost installs the controller and editing tools on your computer.
 
 ## 2. Enter your own credentials
 
 - **Telegram.** Open **BotFather**, send `/newbot`, and follow its prompts. Paste the token as `TELEGRAM_BOT_TOKEN`. After the service starts, send `/id` to your new bot in a private chat. Put the number it returns in `TELEGRAM_ALLOWED_USER_IDS` and restart or redeploy. Use one running deployment per bot token. [BotFather](https://t.me/BotFather)
 - **DeepSeek.** Open **API Keys**, click **Create new API key**, and paste it as `DEEPSEEK_API_KEY`. Keep `DEEPSEEK_MODEL=deepseek-flash`. Ensure the account has API credit. [DeepSeek API Keys](https://platform.deepseek.com/api_keys)
-- **Gemini.** Open **API Keys** in Google AI Studio, click **Create API key**, and paste it as `GEMINI_API_KEY`. The template uses `GEMINI_VISION_MODEL=gemini-3.1-flash-lite`, the model used on the approved setup. Run the review check below to verify access. If the model is unavailable, use a Flash Lite model ID with images, video and structured JSON enabled for your project. [Google AI Studio API Keys](https://aistudio.google.com/app/apikey)
+- **Gemini, optional narration only.** The default Chatterbox voice clone does not require Gemini. If you choose `RAGHU_NARRATION_PROVIDER=gemini`, create an API key in Google AI Studio and paste it as `GEMINI_API_KEY`. [Google AI Studio API Keys](https://aistudio.google.com/app/apikey)
 - **Vast.ai.** In **Manage Keys**, create an API key with access to list offers and create, start, stop and release instances. Paste it as `VAST_API_KEY`. Fund your Vast account and set the hourly rate and job estimate cap in the template. [Vast Manage Keys](https://cloud.vast.ai/manage-keys/)
 - **Vast SSH.** Run `ssh-keygen -t ed25519 -f path/to/vast-worker` and use a dedicated key that can run in batch mode. Add the contents of `vast-worker.pub` in Vast’s SSH keys section. On localhost set `VAST_SSH_KEY_PATH` to the full path of the private key file. On Railway paste the full private-key text into `VAST_SSH_PRIVATE_KEY`. [Vast SSH setup](https://github.com/vast-ai/docs/blob/main/guides/get-started/quickstart.mdx)
 - **Hugging Face.** Open the LTX model page, sign in and request access if prompted. Go to **Settings → Access Tokens → Create new token**, select read access for the model, and paste it as `HF_TOKEN`. [LTX-2.5 weights](https://huggingface.co/Lightricks/LTX-2.5) · [Hugging Face tokens](https://huggingface.co/settings/tokens)
@@ -31,6 +31,6 @@ Voice cloning is enabled in the template. Keep the same course reference on loca
 
 ## 4. Check it from your phone
 
-- Send `/setup`. Fix missing variables and tools first. Then send `/raghu_review_check` to check Gemini without a GPU.
+- Send `/setup`. Fix missing variables and tools first. AI visual review is disabled and no Gemini review test is required.
 - When ready to spend on a first run, set `ALLOW_PAID_GENERATION=true`, restart the app, then tap **Generate → Other → 30 seconds**. The selected time is the full story. The opening video is added separately. Longer options give a complete story with a final payoff.
 - If a run stops, send `/status` and select **Retry this step**. The bot uses saved work and shows the reason if it needs you to fix credentials, budget, or provider access. See the [recovery guide](docs/raghu-railway.md).
