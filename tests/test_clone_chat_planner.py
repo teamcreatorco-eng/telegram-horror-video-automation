@@ -97,7 +97,7 @@ def test_two_minute_story_allows_a_small_overage_when_each_beat_fits(lengths, ex
         writer.check_story(story, count, low, high, editorial_margin=True)
 
 
-def test_production_planner_accepts_83_words_without_any_review_call():
+def test_production_planner_accepts_83_words_without_any_review_call(tmp_path):
     writer = adapter.planning_writer
     story = {"entity": "परछाईं", "characters": [{"tag": "@CHAR-01-BABLI", "name": "बबली"}],
              "speech": [{"speaker": "NARRATOR", "line": " ".join(["छाया"] * n)}
@@ -117,7 +117,9 @@ def test_production_planner_accepts_83_words_without_any_review_call():
             assert "You are the shot continuity editor" not in prompt
             return json.dumps(next(self.answers), ensure_ascii=False)
     model = Model()
-    project = writer.plan_title("बंद दरवाज़ा", 30, project_id="no-review-test", model=model)
+    output = tmp_path / "no-review-test"
+    writer.write_plan("बंद दरवाज़ा", 30, output, model=model)
+    project = json.loads((output / "pipeline.json").read_text(encoding="utf-8"))
     assert len(model.calls) == 3
     assert project["script"]["word_count"] == 83
     assert len(project["scenes"]) == 6

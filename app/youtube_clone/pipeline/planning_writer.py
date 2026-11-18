@@ -335,7 +335,7 @@ def write_plan(title, duration_seconds, output: Path, *, model: WritingModel | N
     if output.exists():
         raise FileExistsError(f"Output directory already exists: {output}")
     project = plan_title(title, duration_seconds, project_id=output.name, model=model,
-                         short_editorial_margin=short_editorial_margin, editorial_checks=False)
+                         short_editorial_margin=short_editorial_margin)
     return save_plan(project, output)
 
 
