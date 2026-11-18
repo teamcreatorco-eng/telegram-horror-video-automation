@@ -1308,8 +1308,8 @@ def work(ident, folder, request, check, progress):
                                "Start a new production to use the continuity checks.")
         from . import youtube_clone_writer
         if youtube_clone_writer.enabled(seconds):
-            if not planning_only and (motion_model() != "ltx" or uses_ending_image()):
-                raise RuntimeError("Clone YouTube production requires LTX with only the opening image.")
+            if not planning_only and uses_ending_image():
+                raise RuntimeError("Clone YouTube production requires only the opening image.")
             if seconds <= 300 and not (folder / "youtube-clone-script.json").exists():
                 from . import clone_chat_planner
                 writer = clone_chat_planner

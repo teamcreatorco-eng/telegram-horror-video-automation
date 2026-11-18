@@ -7,6 +7,26 @@ from types import SimpleNamespace
 from app import raghu_pipeline as pipeline, raghu_vast
 
 
+def test_full_clone_production_accepts_hunyuan_and_reaches_generation(monkeypatch, tmp_path):
+    from app import clone_chat_planner, youtube_clone_writer
+    monkeypatch.setenv("RAGHU_MOTION_MODEL", "hunyuan15")
+    monkeypatch.setenv("RAGHU_NARRATION_PROVIDER", "none")
+    monkeypatch.setenv("RAGHU_PLAN_ONLY", "false")
+    monkeypatch.setattr(pipeline, "production_credentials", lambda: None)
+    monkeypatch.setattr(youtube_clone_writer, "enabled", lambda seconds: True)
+    board = {"seconds": 30, "script": "एक पूरी छोटी कहानी।", "shots": [{"id": f"{i:03}"} for i in range(1, 7)]}
+    stages = []
+    def plan(*args, **kwargs):
+        stages.append("clone planner")
+        return board
+    monkeypatch.setattr(clone_chat_planner, "plan", plan)
+    monkeypatch.setattr(pipeline, "generate", lambda *args: stages.append("hunyuan generation"))
+    monkeypatch.setattr(pipeline, "narration", lambda *args: None)
+    monkeypatch.setattr(pipeline, "edit", lambda *args, **kwargs: stages.append("edit"))
+    pipeline.work("fixture", tmp_path, {"title": "नई कहानी", "duration_seconds": 30}, lambda: None, lambda *args: None)
+    assert stages == ["clone planner", "hunyuan generation", "edit"]
+
+
 def test_hunyuan_graph_uses_single_opening_image_and_actual_15_weights(monkeypatch):
     assets = Path(pipeline.ASSETS)
     monkeypatch.setitem(sys.modules, "wan_worker", SimpleNamespace(node=lambda kind, **kw: {"class_type": kind, "inputs": kw}))
