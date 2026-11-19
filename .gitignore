@@ -7,3 +7,4 @@ data/
 outputs/
 Codex Image *.png
 *.log
+.env.vast-new

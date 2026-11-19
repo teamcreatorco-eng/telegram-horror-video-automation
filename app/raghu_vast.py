@@ -91,22 +91,90 @@ def check_model_access(models, token):
         raise RuntimeError("Hugging Face could not be reached before rental.") from None
 
 def vast(*args):
-    required("VAST_API_KEY")
+    key = required("VAST_API_KEY")
+    def detail(value):
+        return str(value).replace(key, "[redacted]")[:600]
     try:
         result = subprocess.run(["vastai", "--raw", "--retry", "1", *map(str, args)],
                                 capture_output=True, text=True, timeout=45, check=False)
-        if result.returncode:
-            detail = (result.stderr or result.stdout or "No provider details returned").strip()
-            detail = detail.replace(required("VAST_API_KEY"), "[redacted]")
-            raise RuntimeError("Vast operation failed: " + " ".join(args[:2]) + ". " + detail[:400])
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("Vast command timed out: " + " ".join(args[:2])) from exc
+    except OSError as exc:
+        raise RuntimeError("Vast command could not start: " + detail(exc)) from exc
+    if result.returncode:
+        raise RuntimeError("Vast operation failed: " + " ".join(args[:2]) + ". "
+                           + detail(result.stderr or result.stdout or "No provider details returned"))
+    try:
         value = json.loads(result.stdout)
-        if isinstance(value, dict) and (value.get("error") or value.get("success") is False):
-            detail = str(value.get("msg") or value.get("message") or value.get("error") or "Request rejected")
-            detail = detail.replace(required("VAST_API_KEY"), "[redacted]")
-            raise RuntimeError("Vast operation failed: " + " ".join(args[:2]) + ". " + detail[:400])
-        return value
-    except (OSError, ValueError, subprocess.SubprocessError):
-        raise RuntimeError("Vast operation failed: " + " ".join(args[:2])) from None
+    except ValueError as exc:
+        raise RuntimeError("Vast returned unreadable JSON for " + " ".join(args[:2]) + ". "
+                           + detail(result.stderr or result.stdout or "Empty response")) from exc
+    if isinstance(value, dict) and (value.get("error") or value.get("success") is False):
+        raise RuntimeError("Vast operation failed: " + " ".join(args[:2]) + ". "
+                           + detail(value.get("msg") or value.get("message") or value.get("error") or "Request rejected"))
+    return value
+
+
+def create_rental(offers, state, journal, onstart, check, progress):
+    """Single-submit HTTP creation. Retry only explicit availability rejections."""
+    if state.get("creation_uncertain"):
+        raise RuntimeError("Previous rental outcome is uncertain. Check Vast instances before starting another rental.")
+    key = required("VAST_API_KEY")
+    def redact(value):
+        return str(value).replace(key, "[redacted]")[:600]
+    for number, offer in enumerate(offers[:3], 1):
+        check()
+        # Never submit if a previous request with this production label already exists.
+        matches = [row for row in instances() if row.get("label") == state["label"]]
+        if matches:
+            if len(matches) != 1:
+                raise RuntimeError("Multiple rentals match this production; reconcile before retrying.")
+            return int(matches[0]["id"])
+        state.update(offer_id=offer["id"], machine_id=offer.get("machine_id"), rate=offer["dph_total"])
+        store.save(journal, state)
+        payload = dict(client_id="me", image=RUNTIME_IMAGE, disk=150,
+                       label=state["label"], runtype="ssh_direct", cancel_unavail=True,
+                       onstart=Path(onstart).read_text(), env={})
+        failure = None
+        unavailable = False
+        try:
+            with httpx.Client(verify=ssl.create_default_context(), timeout=45) as client:
+                response = client.put(f"https://console.vast.ai/api/v0/asks/{offer['id']}/",
+                                      headers={"Authorization": "Bearer " + key}, json=payload)
+            try:
+                value = response.json()
+            except ValueError:
+                value = {}
+            if response.is_success and value.get("success") is not False and value.get("new_contract"):
+                return int(value["new_contract"])
+            message = value.get("msg") or value.get("message") or value.get("error") or response.text or "Empty response"
+            failure = f"Vast rental HTTP {response.status_code}: {redact(message)}"
+            unavailable = response.status_code in (400, 404, 409, 410) and any(
+                word in str(message).lower() for word in ("unavailable", "not available", "already rented", "not rentable", "no such offer", "scheduling failed"))
+            # Only an explicit non-success result proves the request was rejected.
+            explicit = response.status_code in (400, 401, 402, 403, 404, 409, 410, 422) or value.get("success") is False
+        except httpx.HTTPError as exc:
+            failure = "Vast rental connection failed: " + redact(exc)
+            explicit = False
+        state["creation_error"] = failure
+        store.save(journal, state)
+        if not explicit:
+            # A lost reply can hide a successful paid rental. Reconcile before any retry.
+            for _ in range(5):
+                check()
+                matches = [row for row in instances() if row.get("label") == state["label"]]
+                if len(matches) == 1:
+                    return int(matches[0]["id"])
+                time.sleep(2)
+            state["creation_uncertain"] = True
+            store.save(journal, state)
+            raise RuntimeError(failure + ". Rental outcome is uncertain; no duplicate request was submitted.")
+        if unavailable and number < min(3, len(offers)):
+            progress("Selected GPU became unavailable; trying another eligible offer", 27)
+            continue
+        raise RuntimeError(failure)
+    raise RuntimeError("Eligible Vast offers became unavailable. Retry later with the saved plan.")
+
 
 def instances():
     try:
@@ -606,6 +674,8 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
         label = "railway-raghu-" + ident
         if replace_failed_host:
             label += f"-replacement-{replacement_for}" if recovery_state.get("user_recovery") else "-replacement"
+        if journal.is_file() and store.read(journal).get("creation_uncertain"):
+            raise RuntimeError("Previous rental outcome is uncertain. Check Vast instances before retrying; no new rental submitted.")
         state = {"label": label, "id": None, "destroyed": False}
         if recovery.is_file():
             state["recovery_stop"] = True
@@ -657,11 +727,7 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
         check()
         store.save(journal, state)
         try:
-            created = vast("create", "instance", offer["id"], "--image",
-                           RUNTIME_IMAGE, "--disk", "150",
-                           "--label", state["label"], "--ssh", "--direct", "--cancel-unavail",
-                           "--onstart", start)
-            state["id"] = int(created["new_contract"])
+            state["id"] = create_rental(sorted(eligible, key=quote), state, journal, start, check, progress)
             store.save(journal, state)
             ready_until = time.monotonic() + 720
             running_since = None
