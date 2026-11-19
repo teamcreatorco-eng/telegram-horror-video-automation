@@ -1,5 +1,6 @@
 """Synthesize scene score changes and action cues alongside the continuous bed."""
 
+import re
 import math
 import random
 import wave
@@ -10,6 +11,7 @@ TAU = math.tau
 SCORE = {"unease": (146, 156), "suspense": (192, 207), "dread": (117, 123)}
 # Length, fundamental, pitch change, noise share, gain.
 EFFECTS = {
+    "fire": (5.0, 65, 0, .95, .07),
     "footstep": (.16, 105, -230, .30, .16),
     "knock": (.24, 205, -260, .23, .25),
     "creak": (.82, 275, -145, .12, .18),
@@ -22,6 +24,20 @@ EFFECTS = {
     "bell": (1.15, 880, -34, .03, .22),
     "rattle": (.38, 670, -550, .58, .11),
 }
+
+
+def parse_sound_design(text):
+    """Parse explicit planner cues; never guess sound from incidental story words."""
+    scores = re.findall(r"\[score:(unease|suspense|dread)\]", text, re.I)
+    cues = []
+    for name, at in re.findall(r"\[effect:([a-z]+)@([0-9.]+)\]", text, re.I):
+        try:
+            fraction = float(at)
+        except ValueError:
+            continue
+        if name.lower() in EFFECTS and 0 <= fraction <= 1:
+            cues.append({"effect": name.lower(), "at": fraction})
+    return (scores[0].lower() if scores else "suspense"), cues
 
 
 def render_cues(path, timeline, opening_seconds, seconds):
@@ -46,11 +62,16 @@ def render_cues(path, timeline, opening_seconds, seconds):
             if effect is None:
                 continue
             duration, pitch, sweep, noise, gain = effect
+            ambient = cue["effect"] in {"fire", "rain", "wind"}
+            if ambient:
+                duration = max(.01, (end - start) / RATE * (1 - cue["at"]))
             onset = min(max(start, end - round(.08 * RATE)),
                         start + round(cue["at"] * (end - start)))
             for index in range(onset, min(end, onset + round(duration * RATE))):
                 t = (index - onset) / RATE
                 envelope = min(1, t / .012, (end - index) / (RATE * .02)) * (1 - t / duration) ** 2
+                if ambient:
+                    envelope = min(1, t / .08, (end - index) / (RATE * .08))
                 tone = math.sin(TAU * (pitch * t + sweep * t * t / 2))
                 add(index, gain * envelope * ((1 - noise) * tone + noise * rng.uniform(-1, 1)))
 

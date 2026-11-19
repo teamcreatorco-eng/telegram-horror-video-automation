@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError, create_model
 
+from .raghu_sound import parse_sound_design
 from . import clone_handoff, raghu_services as writing, store
 from .youtube_clone.pipeline.models import new_project
 from .youtube_clone.pipeline.one_minute import validate
@@ -178,15 +179,16 @@ def renderer_plan(project, draft, seconds=60):
         before, _, rest = motion.partition("### LIP-SYNC CONTROL & AUDIO\n")
         if rest:
             motion = before + "### NEGATIVE RESTRICTIONS" + rest.split("### NEGATIVE RESTRICTIONS", 1)[1]
+        score, cues = parse_sound_design(row.sound_design)
         shots.append(dict(
             id=f"{row.scene_number:03d}", narration=row.speech,
             speaker=actor.tag[1:] if actor else "NARRATOR",
             speaker_description=actor.look_summary if actor else "", dialogue_voice=actor.voice if actor else "",
-            still=render_shot["flux"]["prompt"], camera=row.camera, motion=f"{row.visual_action} Camera: {row.camera}.",
+            still=render_shot["flux"]["prompt"], camera=row.camera, visual_action=row.visual_action, motion=f"{row.visual_action} Camera: {row.camera}.",
             clone_motion=motion, simple_prompt=True, location=location, cast=tags,
             start=dict(location=location, cast=opening_tags, staging=row.first_frame_description, props={}),
             end=dict(location=location, cast=tags, staging=row.end_pose, props={}),
-            transition="continuous", time_cut_cue="", score="suspense", sound_cues=[],
+            transition="continuous", time_cut_cue="", score=score, sound_cues=cues,
             sound_design=row.sound_design,
         ))
     result = dict(version=4, planner="youtube_clone", title=project["idea"]["selected"]["title"], seconds=seconds,

@@ -121,6 +121,29 @@ def test_production_planner_accepts_83_words_without_any_review_call(tmp_path):
     writer.write_plan("बंद दरवाज़ा", 30, output, model=model)
     project = json.loads((output / "pipeline.json").read_text(encoding="utf-8"))
     assert len(model.calls) == 3
+    from app.youtube_clone.pipeline.visual_composition import SHOT_RULES
+    assert SHOT_RULES in model.calls[0]
+    assert SHOT_RULES in model.calls[2]
     assert project["script"]["word_count"] == 83
     assert len(project["scenes"]) == 6
     assert project["planning_review"] == []
+
+
+def test_cast_contract_survives_clone_prompt_overrides(monkeypatch):
+    from app import raghu_pipeline
+    monkeypatch.setenv("RAGHU_IMAGE_MODEL", "flux")
+    for simple in (True, False):
+        plan = {"cast": [{"tag": "A", "prompt": "Woman with braid"},
+                         {"tag": "B", "prompt": "Older woman in red sari"}],
+                "locations": [{"tag": "ROOM", "prompt": "Empty room"}],
+                "shots": [{"id": "001", "cast": ["A", "A"], "location": "ROOM",
+                           "clone_motion": "Raises wrist", "simple_prompt": simple,
+                           "still": "A at left, her wrist beside her ear",
+                           "start": {"cast": ["A"], "staging": "A at left", "props": {}}}]}
+        _, [task] = raghu_pipeline.still_batches(plan)
+        assert len([r for r in task["refs"] if "character-" in r]) == 1
+        for key in ("prompt", "retake_prompt"):
+            assert "exactly 1 distinct people" in task[key]
+            assert "Woman with braid" in task[key]
+            assert "Older woman" not in task[key]
+            assert "connects anatomically" in task[key]

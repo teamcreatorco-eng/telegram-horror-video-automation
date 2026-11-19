@@ -1,4 +1,5 @@
 """Railway production path for the approved Raghu image and motion settings."""
+from app.youtube_clone.pipeline.visual_composition import opening_contract, motion_contract
 import hashlib
 import json
 import logging
@@ -120,7 +121,7 @@ def still_batches(plan):
     starts = []
     for index, shot in enumerate(plan["shots"]):
         opening = shot.get("start")
-        visible_at_opening = [tag for tag in shot["cast"] if not opening or tag in opening["cast"]]
+        visible_at_opening = list(dict.fromkeys(tag for tag in shot["cast"] if not opening or tag in opening["cast"]))
         location = shot["location"]
         prompt = (shot["still"] + " Single pre-action pose. Style image is style only. Canonical character appearance, "
                   "including outfit and lower garments, overrides conflicting scene details. "
@@ -198,6 +199,11 @@ def still_batches(plan):
                     + item["retake_prompt"])
         if item.get("strict_opening"):
             item["retake_prompt"] = item["prompt"]
+        identities = {a["tag"]: a.get("identity_description") or a["prompt"] for a in plan["cast"]}
+        contract = opening_contract(visible_at_opening, identities)
+        # Apply after all model/clone branches so no override loses the cast and anatomy rules.
+        item["retake_prompt"] = item.get("retake_prompt", item["prompt"]) + " " + contract
+        item["prompt"] += " " + contract
         starts.append(item)
     return canon, starts
 
@@ -483,12 +489,13 @@ def end_frame_source_signature(folder, item):
 
 
 def opening_motion_prompt(shot):
+    physical_brief = motion_contract(shot)
     if not shot.get("simple_prompt"):
         mouth = "Keep all mouths closed."
         if shot.get("speaker_description"):
             mouth = (f"Only this speaker moves their mouth during the brief line: {shot['speaker_description']}. "
                      "Keep other mouths closed. Hindi dialogue is added in editing.")
-        return (f"{shot.get('clone_motion', shot['motion'])} END: {shot.get('end', {}).get('staging', '')} "
+        return (physical_brief + f"{shot.get('clone_motion', shot['motion'])} END: {shot.get('end', {}).get('staging', '')} "
                 "Preserve the opening image's clean hand-drawn 2D finish, character identity, clothing and "
                 "fixed architecture. Show clear body weight and contact. One continuous shot, "
                 f"no internal cuts, fades, duplicate objects or extra people. {mouth}")
@@ -498,7 +505,7 @@ def opening_motion_prompt(shot):
                  "Other mouths stay closed. Dialogue is added in editing.")
     camera = "Keep the supplied opening framing and subject scale fixed unless the shot explicitly calls for camera movement."
     return (f"One continuous shot from the supplied opening image. {camera} "
-            f"Action: {shot['motion']} End: {shot.get('end', {}).get('staging', '')} {mouth} "
+            f"{physical_brief} {mouth} "
             "Keep the visible character's face, clothes and the room unchanged. "
             "Preserve flat hand-drawn 2D linework. No internal cuts, fades or extra cast.")
 
@@ -1370,7 +1377,7 @@ def work(ident, folder, request, check, progress):
     narration(folder, shot_plan["shots"], check, progress)
     progress("Editing the silent video" if raghu_narration.silent()
              else "Editing picture to narration and mixing original horror ambience", 90)
-    edit(folder, shot_plan, check, opening=not raghu_narration.silent(), music=not raghu_narration.silent())
+    edit(folder, shot_plan, check, opening=not raghu_narration.silent(), music=os.getenv("RAGHU_BACKGROUND_AUDIO", "true").lower() in {"1", "true", "yes"})
     logging.warning("Finished saved production %s", ident)
 
 def smoke(ident, folder, mode, check, progress):
