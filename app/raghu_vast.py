@@ -274,8 +274,23 @@ def request_instance_state(action, ident):
     # State-changing CLI operations can emit a human-readable acknowledgement even with --raw.
     required("VAST_API_KEY")
     try:
-        subprocess.run(["vastai", "--raw", "--retry", "1", action, "instance", str(ident)],
-                       capture_output=True, timeout=45, check=True)
+        result = subprocess.run(["vastai", "--raw", "--retry", "1", action, "instance", str(ident)],
+                                capture_output=True, timeout=45, check=True, text=True)
+        output = ((result.stdout or "") + " " + (result.stderr or "")).strip()
+        output = output.replace(required("VAST_API_KEY"), "[redacted]")
+        if "resources are currently unavailable" in output.lower():
+            raise RuntimeError(
+                f"Vast cannot {action} instance {ident}: the host's GPU resources are currently unavailable. "
+                "Your rental disk and saved production are preserved. Retry this step when capacity returns; "
+                "no new rental was created.")
+        try:
+            reply = json.loads(result.stdout or "{}")
+        except ValueError:
+            reply = None  # The CLI also returns plain-text acknowledgements.
+        if isinstance(reply, dict) and (reply.get("success") is False or reply.get("error")):
+            detail = str(reply.get("msg") or reply.get("error") or "request rejected")
+            detail = detail.replace(required("VAST_API_KEY"), "[redacted]")
+            raise RuntimeError(f"Vast {action} request rejected for instance {ident}: {detail[:400]}")
     except (OSError, subprocess.SubprocessError):
         raise RuntimeError(f"Vast {action} request failed for instance {ident}.") from None
 

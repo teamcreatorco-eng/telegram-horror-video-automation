@@ -228,3 +228,23 @@ def test_startup_progress_distinguishes_package_install_from_rendering():
     assert "installing container packages" in message
     assert "600s" in message
     assert "generation has not started" in message
+
+
+@pytest.mark.parametrize("output,reason", [
+    ("Required resources are currently unavailable, state change queued.", "resources are currently unavailable"),
+    ('{"success":false,"msg":"Denied secret-key"}', "request rejected"),
+])
+def test_state_change_checks_provider_rejection_even_with_exit_zero(monkeypatch, output, reason):
+    from types import SimpleNamespace
+    monkeypatch.setattr(vast, "required", lambda _: "secret-key")
+    monkeypatch.setattr(vast.subprocess, "run", lambda *a, **kw: SimpleNamespace(stdout=output,stderr=""))
+    with pytest.raises(RuntimeError, match=reason) as error:
+        vast.request_instance_state("start",42)
+    assert "secret-key" not in str(error.value)
+
+
+def test_plain_text_state_change_success_is_supported(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(vast, "required", lambda _: "secret-key")
+    monkeypatch.setattr(vast.subprocess, "run", lambda *a, **kw: SimpleNamespace(stdout="stopping instance 42.",stderr=""))
+    vast.request_instance_state("stop",42)
