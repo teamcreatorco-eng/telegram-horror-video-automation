@@ -1,5 +1,5 @@
 """Railway production path for the approved Raghu image and motion settings."""
-from app.youtube_clone.pipeline.visual_composition import opening_contract, motion_contract
+from app.youtube_clone.pipeline.visual_composition import motion_contract
 import hashlib
 import json
 import logging
@@ -151,18 +151,6 @@ def still_batches(plan):
                 strict_opening=True,
                 max_retakes=2,
             )
-            if image_model() == "qwen2511":
-                if len(visible_at_opening) > 2:
-                    raise RuntimeError("This Qwen workflow supports at most two visible characters per image.")
-                identities = " ".join(
-                    f"{tag}: {next(asset for asset in plan['cast'] if asset['tag'] == tag).get('identity_description', wardrobe[tag]).split(' Neutral full-body', 1)[0]}"
-                    for tag in visible_at_opening
-                )
-                item["prompt"] = (
-                    f"Compose this shot using exactly these {len(visible_at_opening)} characters: {identities}. "
-                    "Keep body parts connected to their owner. Preserve the stated framing and show only "
-                    "the body parts required by a close insert. " + item["prompt"]
-                )
             if not shot.get("simple_prompt"):
                 composition = f"Opening composition: {frame}.{camera} Show this exact instant before the action."
                 item.update(
@@ -200,11 +188,6 @@ def still_batches(plan):
                     + item["retake_prompt"])
         if item.get("strict_opening"):
             item["retake_prompt"] = item["prompt"]
-        identities = {a["tag"]: a.get("identity_description") or a["prompt"] for a in plan["cast"]}
-        contract = opening_contract(visible_at_opening, identities)
-        # Apply after all model/clone branches so no override loses the cast and anatomy rules.
-        item["retake_prompt"] = item.get("retake_prompt", item["prompt"]) + " " + contract
-        item["prompt"] += " " + contract
         starts.append(item)
     return canon, starts
 

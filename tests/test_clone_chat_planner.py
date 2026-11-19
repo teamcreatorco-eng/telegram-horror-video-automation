@@ -129,11 +129,11 @@ def test_production_planner_accepts_83_words_without_any_review_call(tmp_path):
     assert project["planning_review"] == []
 
 
-def test_cast_contract_survives_clone_prompt_overrides(monkeypatch):
+def test_original_image_brief_keeps_references_without_appended_sheet_text(monkeypatch):
     from app import raghu_pipeline
     monkeypatch.setenv("RAGHU_IMAGE_MODEL", "flux")
     for simple in (True, False):
-        plan = {"cast": [{"tag": "A", "prompt": "Woman with braid"},
+        plan = {"cast": [{"tag": "A", "prompt": "Woman with braid, neutral grey studio background, full character reference sheet"},
                          {"tag": "B", "prompt": "Older woman in red sari"}],
                 "locations": [{"tag": "ROOM", "prompt": "Empty room"}],
                 "shots": [{"id": "001", "cast": ["A", "A"], "location": "ROOM",
@@ -143,7 +143,7 @@ def test_cast_contract_survives_clone_prompt_overrides(monkeypatch):
         _, [task] = raghu_pipeline.still_batches(plan)
         assert len([r for r in task["refs"] if "character-" in r]) == 1
         for key in ("prompt", "retake_prompt"):
-            assert "exactly 1 distinct people" in task[key]
-            assert "Woman with braid" in task[key]
-            assert "Older woman" not in task[key]
-            assert "connects anatomically" in task[key]
+            assert "neutral grey studio background" not in task[key]
+            assert "full character reference sheet" not in task[key]
+            assert "Reference image 2" in task[key]
+            assert task["refs"][-1] == "style-wide.jpg"
