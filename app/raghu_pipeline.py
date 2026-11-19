@@ -17,6 +17,7 @@ from PIL import Image
 
 from . import media, raghu_narration, store
 from .raghu_sound import render_cues
+from . import raghu_music
 from .raghu_services import ASSETS, STYLE, GeminiUnavailable, choose_title, narrate, plan, required, review_continuity, review_motion, review_still, rewrite_still_prompt
 from .raghu_vast import VastConnectionLost, image_model, motion_model, rent, uses_ending_image
 
@@ -1229,23 +1230,28 @@ def edit(folder, shot_plan, check, *, music=True, opening=False):
         final = scratch / "final.mp4"
         if music:
             bed = scratch / "bed.wav"
-            # Original score, synthesized per timeline. Build tension toward the final reveal.
-            rise = f"(0.60+0.40*t/{max(cursor, 1):.6f})"
-            pulse = "pow(0.5+0.5*cos(2*PI*1.6*t),12)"
-            swell = "pow(0.5+0.5*cos(2*PI*0.115*t+2),3)"
-            sub = f"0.20*sin(2*PI*(47*t+0.45*sin(0.8*t)))*{pulse}"
-            drone = "0.08*sin(2*PI*55*t)+0.07*sin(2*PI*58.3*t)+0.055*sin(2*PI*82.4*t)"
-            tension = f"(0.10*sin(2*PI*173*t)+0.08*sin(2*PI*184*t+0.8*sin(1.1*t)))*{swell}"
-            hit = f"0.10*sin(2*PI*(67*t+1.4*sin(1.6*t)))*pow({swell},4)"
-            strings = "(0.045*sin(2*PI*347*t)+0.035*sin(2*PI*369*t))*pow(0.5+0.5*cos(2*PI*0.27*t+0.7),4)"
-            left = f"{rise}*({sub}+{drone}+{tension}+{hit}+{strings})"
-            right = f"{rise}*({sub}+{drone}+0.82*({tension})+{hit}+0.028*sin(2*PI*193*t)*{swell}+0.8*({strings}))"
-            media.ff("-f", "lavfi", "-i", f"aevalsrc='{left}|{right}':s=48000",
-                     "-af", f"highpass=f=32,lowpass=f=1700,volume=1.50,afade=t=in:d=0.25,"
-                            f"afade=t=out:st={max(0, cursor-.7):.6f}:d=0.7",
-                     "-t", f"{cursor:.6f}", bed)
+            music_source = raghu_music.source()
+            if music_source:
+                raghu_music.render(bed, cursor, music_source)
+            else:
+                # Original score, synthesized per timeline. Build tension toward the final reveal.
+                rise = f"(0.60+0.40*t/{max(cursor, 1):.6f})"
+                pulse = "pow(0.5+0.5*cos(2*PI*1.6*t),12)"
+                swell = "pow(0.5+0.5*cos(2*PI*0.115*t+2),3)"
+                sub = f"0.20*sin(2*PI*(47*t+0.45*sin(0.8*t)))*{pulse}"
+                drone = "0.08*sin(2*PI*55*t)+0.07*sin(2*PI*58.3*t)+0.055*sin(2*PI*82.4*t)"
+                tension = f"(0.10*sin(2*PI*173*t)+0.08*sin(2*PI*184*t+0.8*sin(1.1*t)))*{swell}"
+                hit = f"0.10*sin(2*PI*(67*t+1.4*sin(1.6*t)))*pow({swell},4)"
+                strings = "(0.045*sin(2*PI*347*t)+0.035*sin(2*PI*369*t))*pow(0.5+0.5*cos(2*PI*0.27*t+0.7),4)"
+                left = f"{rise}*({sub}+{drone}+{tension}+{hit}+{strings})"
+                right = f"{rise}*({sub}+{drone}+0.82*({tension})+{hit}+0.028*sin(2*PI*193*t)*{swell}+0.8*({strings}))"
+                media.ff("-f", "lavfi", "-i", f"aevalsrc='{left}|{right}':s=48000",
+                         "-af", f"highpass=f=32,lowpass=f=1700,volume=1.50,afade=t=in:d=0.25,"
+                                f"afade=t=out:st={max(0, cursor-.7):.6f}:d=0.7",
+                         "-t", f"{cursor:.6f}", bed)
             cues = scratch / "cues.wav"
-            render_cues(cues, timeline, opening_seconds, cursor)
+            cue_timeline = [{**row, "score": "none"} for row in timeline] if music_source else timeline
+            render_cues(cues, cue_timeline, opening_seconds, cursor)
             media.ff("-i", joined, "-i", bed, "-i", cues, "-filter_complex",
                      "[2:a]aformat=sample_rates=48000:channel_layouts=stereo[scene];"
                      "[1:a][scene]amix=inputs=2:duration=first:normalize=0[score];"
