@@ -522,6 +522,45 @@ class Remote:
         self.phase(f"while [ ! -f {marker} ]; do "
                    "ps -p $(cat setup-motion.pid) -o stat= | grep -q '^[^Z]' || exit 1; sleep 2; done", 1800)
 
+def wait_for_startup_release(previous, journal, check, progress):
+    """Reconcile an asynchronous stop before creating another paid contract."""
+    if previous.get("ssh_ready_seconds") or not previous.get("recovery_stop"):
+        raise RuntimeError("This rental has saved work. Resume it instead of replacing its host.")
+    missing = 0
+    for attempt in range(25):
+        check()
+        row = next((r for r in instances() if r["id"] == previous["id"]), None)
+        if row is not None and row.get("label") != previous.get("label"):
+            raise RuntimeError("Vast rental identity changed. No replacement was rented.")
+        missing = missing + 1 if row is None else 0
+        if missing >= 2 or (row and (instance_stopped(row) or stopped_failed_start(row))):
+            confirmed = {**previous, "stop_confirmed_at": time.time()}
+            if missing >= 2:
+                confirmed.update(destroyed=True, missing_at=time.time())
+            store.save(journal, confirmed)
+            return confirmed
+        if attempt % 6 == 0:
+            progress("Startup failed · waiting for Vast to confirm the old rental stopped; saved script retained", 27)
+        if attempt < 24:
+            time.sleep(5)
+    raise RuntimeError(
+        "Vast container startup failed and its stop is still pending. Your script is saved. "
+        "No second GPU was rented. Use Retry this step to recheck the stop and continue; "
+        "you do not need to start a new video.")
+
+
+def startup_progress(row, elapsed):
+    status = (row or {}).get("actual_status", "pending")
+    detail = ((row or {}).get("status_msg") or "").lower()
+    if any(token in detail for token in ("get:", "apt-get", "packages", "unpacking")):
+        phase = "installing container packages"
+    elif any(token in detail for token in ("pulling", "downloading", "extracting")):
+        phase = "downloading container image"
+    else:
+        phase = "waiting for container startup"
+    return f"Vast {status} · {phase} · {int(elapsed)}s elapsed (video generation has not started)"
+
+
 @contextmanager
 def rent(folder, ident, check, *, progress=None, **options):
     """Try at most one replacement, only when the first host failed before setup."""
@@ -571,16 +610,14 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
     replacement_for = recovery_state.get("replace_instance")
     replace_failed_host = bool(replacement_for and previous.get("id") == replacement_for)
     if replace_failed_host:
-        row = next((item for item in instances() if item["id"] == replacement_for
-                    and item.get("label") == previous.get("label")), None)
-        if (not row or previous.get("ssh_ready_seconds") or not previous.get("recovery_stop")
-                or not (instance_stopped(row) or stopped_failed_start(row)) or resume_seconds):
-            raise RuntimeError("Cannot switch hosts until the failed startup contract is confirmed stopped.")
+        if resume_seconds:
+            raise RuntimeError("A saved-frame continuation cannot replace its rental.")
+        previous = wait_for_startup_release(previous, journal, check, progress)
         store.save(folder / f"vast-preserved-instance-{replacement_for}.json", previous)
         for path in folder.glob("vast-preserved-instance-*.json"):
             failed = store.read(path)
             startup_spent += float(failed["rate"]) * max(
-                60, failed.get("stopped_at", time.time()) - failed["started"]) / 3600
+                60, failed.get("stop_confirmed_at", time.time()) - failed["started"]) / 3600
     if resume_seconds and not previous.get("recovery_stop"):
         raise RuntimeError("No stopped Vast rental is available for this saved-frame continuation.")
     if previous.get("recovery_stop") and previous.get("id") and not replace_failed_host:
@@ -731,11 +768,16 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
             store.save(journal, state)
             ready_until = time.monotonic() + 720
             running_since = None
+            last_startup_report = 0
             last_reason = "container did not become ready"
             progress("Vast rental created · waiting for container startup", 27)
             while time.monotonic() < ready_until:
                 check()
                 row = next((r for r in instances() if r["id"] == state["id"]), None)
+                if time.monotonic() - last_startup_report >= 30:
+                    if not row or row.get("actual_status") != "running":
+                        progress(startup_progress(row, time.time() - started), 27)
+                    last_startup_report = time.monotonic()
                 if row and row.get("actual_status") == "running":
                     if running_since is None:
                         running_since = time.monotonic()

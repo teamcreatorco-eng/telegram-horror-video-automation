@@ -190,3 +190,41 @@ def test_empty_credit_blocks_preserved_restart_before_any_mutation(monkeypatch, 
     with pytest.raises(RuntimeError, match="Vast balance is"):
         remote.restart_preserved({"id": 42})
     assert calls == []
+
+
+@pytest.mark.parametrize("disappears", [False, True])
+def test_startup_release_waits_for_delayed_stop(monkeypatch, tmp_path, disappears):
+    state = {"id": 42, "label": "job", "recovery_stop": True}
+    loading = {"id": 42, "label": "job", "actual_status": "loading", "intended_status": "stopped"}
+    stopped = {**loading, "actual_status": "stopped"}
+    listings = iter([[loading], [], [loading], [], []] if disappears else [[loading], [loading], [stopped]])
+    monkeypatch.setattr(vast, "instances", lambda: next(listings))
+    monkeypatch.setattr(vast.time, "sleep", lambda _: None)
+    events = []
+    result = vast.wait_for_startup_release(state, tmp_path / "rental.json", lambda: None,
+                                          lambda *args: events.append(args))
+    assert result["stop_confirmed_at"] > 0
+    assert bool(result.get("destroyed")) == disappears
+    assert events
+
+
+def test_startup_release_does_not_assume_stop_intent_is_confirmation(monkeypatch, tmp_path):
+    state = {"id": 42, "label": "job", "recovery_stop": True}
+    monkeypatch.setattr(vast, "instances", lambda: [{"id": 42, "label": "job",
+        "actual_status": "loading", "intended_status": "stopped"}])
+    monkeypatch.setattr(vast.time, "sleep", lambda _: None)
+    with pytest.raises(RuntimeError, match="No second GPU was rented"):
+        vast.wait_for_startup_release(state, tmp_path / "rental.json", lambda: None, lambda *args: None)
+
+
+def test_startup_release_never_replaces_host_with_saved_work(tmp_path):
+    with pytest.raises(RuntimeError, match="saved work"):
+        vast.wait_for_startup_release({"ssh_ready_seconds": 5}, tmp_path / "rental.json",
+                                      lambda: None, lambda *args: None)
+
+
+def test_startup_progress_distinguishes_package_install_from_rendering():
+    message = vast.startup_progress({"actual_status": "loading", "status_msg": "Get:5 Packages"}, 600)
+    assert "installing container packages" in message
+    assert "600s" in message
+    assert "generation has not started" in message
