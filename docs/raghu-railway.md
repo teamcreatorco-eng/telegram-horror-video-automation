@@ -1,5 +1,28 @@
 # Raghu production on Railway or localhost
 
+## Host speed and rental cost observations
+
+The cost-aware rental selector preserves the approved generation workers and settings.
+For LTX it can use a host's recorded warm p90 clip time when the exact worker/runtime/model
+fingerprint and advertised machine, CPU allocation, RAM and PCIe fields match. Evidence expires
+after seven days and needs at least three warmed clips after the first clip. Missing host
+fields, repeated clip IDs, worker restarts or incompatible logs do not qualify a fast host.
+An unknown host uses the existing 70-second planning assumption, explicitly marked unmeasured;
+this is not a promise of render speed. Old logs without fingerprints are not automatically imported.
+
+Observations are saved under `/data/_host-costs/`; each job has `rental-cost-observation.json`
+and its rental journal contains `cost_projection`. Corrupt observations cannot block GPU cleanup.
+The projection covers listed rental time and estimated transfer fees; writing/API charges,
+Railway allocation, taxes, storage and unplanned retries remain exclusions. The pure calculator
+accepts separately known costs, but their absence must not be reported as a verified full-video bill.
+The fixed 25-minute overhead estimate covers setup/image work and remains unmeasured for unknown hosts.
+The elapsed estimate is wall time times the listed rate, may include paused time and is not an invoice.
+
+For a silent production set `RAGHU_NARRATION_PROVIDER=none` before starting a fresh job. The existing
+silent path skips Chatterbox download/generation and local TTS; do not remove narrator references
+or change the provider globally for installations whose users still want narration. No runtime,
+precision, frame, resolution, prompt, image-reference, or diffusion-step optimization is enabled.
+
 Deploy one Docker service with a persistent volume mounted at `/data`. Keep one replica when using SQLite. Allow at least 1 GB of persistent capacity for a ten-minute production with room to save sources and retakes. The Telegram bot accepts a story title, `/generate`, or “start the mission”. It delivers the finished video back to the requesting private chat. YouTube publishing is separate and disabled unless explicitly configured.
 
 For localhost, install Python 3.11, FFmpeg/FFprobe, and OpenSSH. Run `python -m pip install -r requirements.txt vastai==1.9.1`, put the variables below in the ignored `.env` or `.env.telegram`, and run `python run.py`. Keep that process running while using Telegram. With the default SQLite setup, save and keep the local `data/` folder. The app uses Vast for image and motion generation. Use a separate Telegram bot token for each concurrently running installation.

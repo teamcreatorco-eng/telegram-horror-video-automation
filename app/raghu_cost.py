@@ -2,6 +2,8 @@
 import hashlib
 import json
 import math
+import pathlib
+import uuid
 
 HOST_FIELDS = ('machine_id', 'gpu_name', 'cpu_name', 'cpu_cores_effective', 'cpu_ram', 'gpu_ram', 'pcie_bw')
 
@@ -74,6 +76,10 @@ def host_signature(offer):
     return hashlib.sha256(json.dumps({k: offer[k] for k in HOST_FIELDS}, sort_keys=True).encode()).hexdigest()
 
 
+def host_metadata(offer):
+    return {key: offer.get(key) for key in HOST_FIELDS}
+
+
 def _observation(records, offer, key, now):
     signature = host_signature(offer)
     usable = []
@@ -108,3 +114,49 @@ def offer_cost(offer, records, key, clips, overhead_seconds, download_gb, upload
                 speed_basis='measured_host_warm_p90' if row else 'unmeasured_estimate',
                 exclusions=['writing/API fees', 'Railway editing/hosting allocation', 'taxes',
                             'unplanned retries', 'post-stop storage'])
+
+
+def load_observations(directory):
+    records = []
+    for path in pathlib.Path(directory).glob('*.json'):
+        try:
+            row = json.loads(path.read_text(encoding='utf-8'))
+            if isinstance(row, dict):
+                records.append(row)
+        except (OSError, ValueError):
+            continue
+    return records
+
+
+def _save(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
+    try:
+        temp.write_text(json.dumps(value, ensure_ascii=False, allow_nan=False, indent=2), encoding='utf-8')
+        temp.replace(path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def record_rental_cost(folder, catalog_path, now):
+    """Best-effort observations, never a provider invoice. Callers isolate failures."""
+    folder = pathlib.Path(folder)
+    state = json.loads((folder / 'raghu-rental.json').read_text(encoding='utf-8'))
+    if not state.get('workload_key') or not state.get('host_signature') or state.get('motion_model') != 'ltx':
+        return None
+    rows = [json.loads(line) for line in (folder / 'events.jsonl').read_text(encoding='utf-8').splitlines() if line.strip()]
+    # Do not merge samples from earlier contracts copied into a resumed folder.
+    rows = [row for row in rows if row.get('time', state['started']) >= state['started']]
+    summary = summarize_events(rows)
+    elapsed = max(0, number(now) - number(state['started']))
+    result = dict(summary, measured_at=now, host_signature=state['host_signature'],
+                  host_hardware=state.get('host_hardware', {}),
+                  workload_key=state['workload_key'], rental_id=state.get('id'),
+                  elapsed_wall_seconds=elapsed, elapsed_compute_estimate_usd=elapsed * number(state['rate']) / 3600,
+                  invoice_verified=False, estimate_basis='wall elapsed times listed rental rate; may include stopped time',
+                  exclusions=['transfer invoice', 'storage', 'taxes', 'writing/API fees', 'Railway allocation'])
+    _save(folder / 'rental-cost-observation.json', result)
+    if summary['qualifiable']:
+        name = hashlib.sha256(str(state.get('id')).encode()).hexdigest() + '.json'
+        _save(pathlib.Path(catalog_path) / name, result)
+    return result

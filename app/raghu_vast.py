@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 import httpx
 
-from . import store
+from . import store, raghu_cost
 from .raghu_services import ASSETS, required
 
 REMOTE = "/workspace/raghu"
@@ -79,6 +79,13 @@ def model_manifest(quantization):
     return models
 
 
+def cost_workload_key(quantization, model):
+    # Include runtime/setup source as well as every model hash, without altering workers.
+    files = ['videos.py', 'worker.sh', 'common.py', 'download_video_only.py']
+    runtime = json.dumps({name: (ASSETS / name).read_bytes().hex() for name in files}, sort_keys=True).encode()
+    return raghu_cost.workload_key(model_manifest(quantization), RUNTIME_IMAGE.encode() + runtime, quantization, model)
+
+
 def check_model_access(models, token):
     try:
         with httpx.Client(timeout=15, follow_redirects=False) as client:
@@ -129,8 +136,16 @@ def create_rental(offers, state, journal, onstart, check, progress):
         if matches:
             if len(matches) != 1:
                 raise RuntimeError("Multiple rentals match this production; reconcile before retrying.")
+            if state.get('workload_key'):
+                state['host_signature'] = raghu_cost.host_signature(matches[0])
+                state['host_hardware'] = raghu_cost.host_metadata(matches[0])
+                state.pop('cost_projection', None)
             return int(matches[0]["id"])
         state.update(offer_id=offer["id"], machine_id=offer.get("machine_id"), rate=offer["dph_total"])
+        if state.get('workload_key'):
+            state['host_signature'] = raghu_cost.host_signature(offer)
+            state['host_hardware'] = raghu_cost.host_metadata(offer)
+            state.pop('cost_projection', None)
         store.save(journal, state)
         payload = dict(client_id="me", image=RUNTIME_IMAGE, disk=150,
                        label=state["label"], runtype="ssh_direct", cancel_unavail=True,
@@ -222,6 +237,11 @@ def ensure_ssh_key(public_key):
 def finish_rental(journal, preserve):
     """Keep the generation failure visible when the provider also fails cleanup."""
     original = sys.exc_info()[1]
+    try:
+        raghu_cost.record_rental_cost(journal.parent, store.DATA / '_host-costs', time.time())
+    except Exception:
+        # Accounting must never leave a paid rental running or hide its original error.
+        logging.warning('Rental accounting unavailable; continuing rental cleanup', exc_info=True)
     try:
         if original is None and os.getenv("RAGHU_DESTROY_ON_SUCCESS", "false").lower() == "true":
             # Successful generation has copied its verified assets off the GPU.
@@ -690,6 +710,9 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
     if quantization not in ("nvfp4", "fp8") or (quantization == "nvfp4" and gpu != "RTX_5090"):
         raise RuntimeError("Use RTX_5090 for the approved NVFP4 configuration.")
     models = [] if model != "ltx" else model_manifest(quantization)
+    workload = cost_workload_key(quantization, model) if model == 'ltx' else None
+    observations = raghu_cost.load_observations(store.DATA / '_host-costs') if workload else []
+    quote_time = time.time()
     hf_token = None if image_only or model != "ltx" else required("HF_TOKEN")
     if hf_token:
         check_model_access(models, hf_token)
@@ -742,7 +765,13 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
         balance = balance.get("user", balance)
         credit = float(balance.get("credit", 0))
         query = f"gpu_name={gpu} num_gpus=1 verified=true rentable=true rented=false reliability>=0.98 disk_space>=150"
+        def detailed_quote(offer):
+            return raghu_cost.offer_cost(offer, observations, workload, shots, 25 * 60,
+                                        download_gb, 4, quote_time)
+
         def quote(offer):
+            if workload:
+                return detailed_quote(offer)['total_usd']
             return (float(offer["dph_total"]) * estimate_minutes / 60
                     + float(offer["inet_down_cost"]) * download_gb
                     + float(offer["inet_up_cost"]) * 4)
@@ -781,10 +810,18 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
         started = time.time()
         state.update(rate=offer["dph_total"], gpu=gpu, quantization=quantization, motion_model=model,
                      image_model=still_model, offer_id=offer["id"], machine_id=offer.get("machine_id"), started=started)
+        if workload:
+            state.update(workload_key=workload, host_signature=raghu_cost.host_signature(offer),
+                         host_hardware=raghu_cost.host_metadata(offer),
+                         cost_projection=detailed_quote(offer))
         check()
         store.save(journal, state)
         try:
             state["id"] = create_rental(sorted(eligible, key=quote), state, journal, start, check, progress)
+            if workload:
+                selected = next((o for o in eligible if o['id'] == state.get('offer_id')), None)
+                if selected and state.get('host_signature') == raghu_cost.host_signature(selected):
+                    state['cost_projection'] = detailed_quote(selected)
             store.save(journal, state)
             ready_until = time.monotonic() + 720
             running_since = None
