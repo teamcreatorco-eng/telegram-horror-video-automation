@@ -4,10 +4,10 @@ from app.raghu_cost import estimate_cost, summarize_events, workload_key, host_s
 
 
 def events():
-    return [dict(stage='video_model_ready'), *[
+    return [dict(stage='video_model_ready',time=2,resolution=[1280,768],steps=[8,3],quantization='nvfp4'), *[
         row for i, seconds in enumerate([62, 53, 55, 54]) for row in
-        [dict(stage='video_start', id=str(i), num_frames=121, fps=24),
-         dict(stage='video_done', id=str(i), seconds=seconds)]
+        [dict(stage='video_start', time=3+i*2,id=str(i), num_frames=121, fps=24),
+         dict(stage='video_done', time=4+i*2,id=str(i), seconds=seconds)]
     ]]
 
 
@@ -53,7 +53,7 @@ def offer(machine=1, rate=.7):
 
 def observation(o, seconds=55):
     return dict(host_signature=host_signature(o), workload_key='approved', measured_at=100,
-                warm_samples=3, warm_p90_seconds=seconds, first_seconds=seconds+7)
+                qualifiable=True,warm_samples=3, warm_p90_seconds=seconds, first_seconds=seconds+7)
 
 
 def test_more_expensive_hourly_host_can_win_complete_job_cost():
@@ -82,3 +82,15 @@ def test_cpu_allocation_change_invalidates_observation():
     o=offer(); r=observation(o)
     assert measured_seconds([r], {**o,'cpu_cores_effective':4}, 'approved', 110) is None
     assert host_signature({}) is None
+
+
+@pytest.mark.parametrize('change',[{'qualifiable':False},{'warm_p90_seconds':10**10000}])
+def test_corrupt_catalog_never_becomes_measured_speed(change):
+    o=offer()
+    assert measured_seconds([{**observation(o),**change}],o,'approved',110) is None
+
+
+def test_unordered_or_untimestamped_events_do_not_qualify():
+    rows=events();rows[1],rows[2]=rows[2],rows[1]
+    assert not summarize_events(rows)['qualifiable']
+    assert not summarize_events([{k:v for k,v in r.items() if k!='time'} for r in events()])['qualifiable']

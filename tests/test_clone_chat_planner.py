@@ -104,9 +104,13 @@ def test_production_planner_accepts_83_words_without_any_review_call(tmp_path):
                         for n in [14, 14, 14, 14, 14, 13]]}
     assets = {"characters": [{**story["characters"][0], "look_summary": "Woman in blue", "voice_description": "Hindi woman"}],
               "backgrounds": [{"tag": "#BGD-01-ROOM", "location_name": "कमरा", "look_summary": "An empty room"}]}
-    shots = {"scenes": [{"scene_number": i, "title": "कमरा", "background_tag": "#BGD-01-ROOM",
-                         "character_tags": ["@CHAR-01-BABLI"],
-                         **{key: "She stands by the door" for key in writer.VISUAL_FIELDS}}
+    shots = {"scenes": [{"scene_number": i, "title": "कमरा", "sound_design": "Quiet room",
+                         "scene_record": {"location": "#BGD-01-ROOM", "view": "interior", "camera": "locked medium",
+                             "visible": [{"tag": "@CHAR-01-BABLI", "pose": "standing by the door",
+                                          "end_pose": "standing by the door", "face_visible": True}],
+                             "offscreen": [], "objects": [], "static_surfaces": [],
+                             "action": {"kind": "establishing", "actor": None, "target": None,
+                                        "movement": "holds the composition", "reveal_face": False}}}
                         for i in range(1, 7)]}
     class Model:
         def __init__(self):

@@ -83,7 +83,8 @@ def cost_workload_key(quantization, model):
     # Include runtime/setup source as well as every model hash, without altering workers.
     files = ['videos.py', 'worker.sh', 'common.py', 'download_video_only.py']
     runtime = json.dumps({name: (ASSETS / name).read_bytes().hex() for name in files}, sort_keys=True).encode()
-    return raghu_cost.workload_key(model_manifest(quantization), RUNTIME_IMAGE.encode() + runtime, quantization, model)
+    conditioning = b'paired' if uses_ending_image() else b'opening-only'
+    return raghu_cost.workload_key(model_manifest(quantization), RUNTIME_IMAGE.encode() + conditioning + runtime, quantization, model)
 
 
 def check_model_access(models, token):
@@ -129,6 +130,12 @@ def create_rental(offers, state, journal, onstart, check, progress):
     key = required("VAST_API_KEY")
     def redact(value):
         return str(value).replace(key, "[redacted]")[:600]
+    def adopt_unqualified(row):
+        if state.get('workload_key'):
+            # A reconciled contract is not proof that it is the attempted offer.
+            state.update(host_signature=None, host_hardware=raghu_cost.host_metadata(row), offer_id=None)
+            state.pop('cost_projection', None)
+        return int(row['id'])
     for number, offer in enumerate(offers[:3], 1):
         check()
         # Never submit if a previous request with this production label already exists.
@@ -136,11 +143,7 @@ def create_rental(offers, state, journal, onstart, check, progress):
         if matches:
             if len(matches) != 1:
                 raise RuntimeError("Multiple rentals match this production; reconcile before retrying.")
-            if state.get('workload_key'):
-                state['host_signature'] = raghu_cost.host_signature(matches[0])
-                state['host_hardware'] = raghu_cost.host_metadata(matches[0])
-                state.pop('cost_projection', None)
-            return int(matches[0]["id"])
+            return adopt_unqualified(matches[0])
         state.update(offer_id=offer["id"], machine_id=offer.get("machine_id"), rate=offer["dph_total"])
         if state.get('workload_key'):
             state['host_signature'] = raghu_cost.host_signature(offer)
@@ -179,7 +182,7 @@ def create_rental(offers, state, journal, onstart, check, progress):
                 check()
                 matches = [row for row in instances() if row.get("label") == state["label"]]
                 if len(matches) == 1:
-                    return int(matches[0]["id"])
+                    return adopt_unqualified(matches[0])
                 time.sleep(2)
             state["creation_uncertain"] = True
             store.save(journal, state)
@@ -820,7 +823,7 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
             state["id"] = create_rental(sorted(eligible, key=quote), state, journal, start, check, progress)
             if workload:
                 selected = next((o for o in eligible if o['id'] == state.get('offer_id')), None)
-                if selected and state.get('host_signature') == raghu_cost.host_signature(selected):
+                if selected and state.get('host_signature') and state['host_signature'] == raghu_cost.host_signature(selected):
                     state['cost_projection'] = detailed_quote(selected)
             store.save(journal, state)
             ready_until = time.monotonic() + 720

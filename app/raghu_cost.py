@@ -9,7 +9,11 @@ HOST_FIELDS = ('machine_id', 'gpu_name', 'cpu_name', 'cpu_cores_effective', 'cpu
 
 
 def number(value):
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+    try:
+        valid = not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value) and value >= 0
+    except OverflowError:
+        valid = False
+    if not valid:
         raise ValueError('Expected a finite non-negative number')
     return value
 
@@ -39,18 +43,28 @@ def summarize_events(events):
     starts, done, intervals = {}, {}, []
     sessions = 0
     valid = True
+    last_event_time = -1
     for row in events:
         stage = row.get('stage')
+        if stage in ('video_model_ready', 'video_start', 'video_done'):
+            timestamp = row.get('time')
+            if timestamp is None:
+                valid = False
+            else:
+                number(timestamp)
+                if timestamp < last_event_time:
+                    valid = False
+                last_event_time = timestamp
         if stage == 'video_model_ready':
             sessions += 1
         elif stage == 'video_start':
             ident = row['id']
-            if ident in starts or row.get('num_frames') != 121 or row.get('fps') != 24:
+            if ident in starts or ident in done or sessions != 1 or row.get('num_frames') != 121 or row.get('fps') != 24:
                 valid = False
             starts[ident] = row
         elif stage == 'video_done':
             ident = row['id']
-            if ident in done or number(row['seconds']) <= 0:
+            if ident in done or ident not in starts or number(row['seconds']) <= 0:
                 valid = False
             done[ident] = row['seconds']
         elif stage == 'model_download':
@@ -86,8 +100,10 @@ def _observation(records, offer, key, now):
     if signature is None:
         return None
     for row in records:
+        if not isinstance(row, dict):
+            continue
         try:
-            if (row['host_signature'] != signature or row['workload_key'] != key
+            if (row.get('qualifiable') is not True or row['host_signature'] != signature or row['workload_key'] != key
                     or not 0 <= now - number(row['measured_at']) <= 7 * 86400
                     or type(row['warm_samples']) is not int or row['warm_samples'] < 3
                     or number(row['warm_p90_seconds']) <= 0 or number(row['first_seconds']) <= 0):
@@ -144,19 +160,28 @@ def record_rental_cost(folder, catalog_path, now):
     state = json.loads((folder / 'raghu-rental.json').read_text(encoding='utf-8'))
     if not state.get('workload_key') or not state.get('host_signature') or state.get('motion_model') != 'ltx':
         return None
+    name = hashlib.sha256(str(state.get('id')).encode()).hexdigest() + '.json'
+    catalog_file = pathlib.Path(catalog_path) / name
+    # Retract the old observation before parsing: corrupt or partial resumed logs
+    # must not leave a previous fast qualification in circulation.
+    catalog_file.unlink(missing_ok=True)
     rows = [json.loads(line) for line in (folder / 'events.jsonl').read_text(encoding='utf-8').splitlines() if line.strip()]
-    # Do not merge samples from earlier contracts copied into a resumed folder.
-    rows = [row for row in rows if row.get('time', state['started']) >= state['started']]
+    missing_time = any(row.get('time') is None for row in rows if row.get('stage') in ('video_model_ready','video_start','video_done'))
+    rows = [row for row in rows if row.get('time') is not None and number(row['time']) >= state['started']]
     summary = summarize_events(rows)
+    ready = [row for row in rows if row.get('stage') == 'video_model_ready']
+    compatible = all(row.get('resolution') == [1280,768] and row.get('steps') == [8,3]
+                     and row.get('quantization') == state.get('quantization') for row in ready)
+    summary['qualifiable'] = summary['qualifiable'] and compatible and not missing_time
+    measured_at = max((row['time'] for row in rows if row.get('stage') == 'video_done'), default=0)
     elapsed = max(0, number(now) - number(state['started']))
-    result = dict(summary, measured_at=now, host_signature=state['host_signature'],
+    result = dict(summary, measured_at=measured_at, host_signature=state['host_signature'],
                   host_hardware=state.get('host_hardware', {}),
                   workload_key=state['workload_key'], rental_id=state.get('id'),
                   elapsed_wall_seconds=elapsed, elapsed_compute_estimate_usd=elapsed * number(state['rate']) / 3600,
                   invoice_verified=False, estimate_basis='wall elapsed times listed rental rate; may include stopped time',
                   exclusions=['transfer invoice', 'storage', 'taxes', 'writing/API fees', 'Railway allocation'])
     _save(folder / 'rental-cost-observation.json', result)
-    if summary['qualifiable']:
-        name = hashlib.sha256(str(state.get('id')).encode()).hexdigest() + '.json'
-        _save(pathlib.Path(catalog_path) / name, result)
+    if summary['qualifiable'] and 0 <= now - measured_at <= 7 * 86400:
+        _save(catalog_file, result)
     return result

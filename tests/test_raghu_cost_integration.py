@@ -73,3 +73,37 @@ def test_host_telemetry_keeps_only_hardware_fields():
     result=cost.host_metadata({**offer(), 'api_key':'private', 'env':{'TOKEN':'private'}})
     assert result['cpu_cores_effective']==8
     assert 'api_key' not in result and 'env' not in result
+
+
+def test_old_cleanup_does_not_refresh_or_keep_disqualified_evidence(tmp_path):
+    prepare(tmp_path)
+    a=cost.record_rental_cost(tmp_path,tmp_path/'catalog',101)
+    b=cost.record_rental_cost(tmp_path,tmp_path/'catalog',999)
+    assert a['measured_at']==b['measured_at']==10
+    with (tmp_path/'events.jsonl').open('a') as f:f.write('\n'+json.dumps(events()[-1]))
+    cost.record_rental_cost(tmp_path,tmp_path/'catalog',1000)
+    assert cost.load_observations(tmp_path/'catalog')==[]
+
+
+def test_wrong_readiness_settings_do_not_qualify(tmp_path):
+    prepare(tmp_path)
+    rows=events();rows[0]['quantization']='fp8'
+    (tmp_path/'events.jsonl').write_text('\n'.join(map(json.dumps,rows)))
+    assert not cost.record_rental_cost(tmp_path,tmp_path/'catalog',101)['qualifiable']
+
+
+def test_paired_and_opening_only_workloads_are_distinct(monkeypatch):
+    monkeypatch.setattr(vast,'model_manifest',lambda _:[])
+    monkeypatch.setenv('RAGHU_MOTION_MODEL','ltx')
+    monkeypatch.setenv('RAGHU_LTX_END_FRAME','false');a=vast.cost_workload_key('nvfp4','ltx')
+    monkeypatch.setenv('RAGHU_LTX_END_FRAME','true')
+    assert vast.cost_workload_key('nvfp4','ltx')!=a
+
+
+def test_preexisting_contract_does_not_inherit_attempted_offer(monkeypatch,tmp_path):
+    from test_rental_creation import setup
+    run,_,state=setup(monkeypatch,tmp_path,[],lambda:[{'id':77,'label':'job'}])
+    state.update(workload_key='approved',host_signature='wrong',offer_id=1,cost_projection={'total_usd':1})
+    assert run()==77
+    assert state['host_signature'] is None
+    assert state.get('offer_id') is None and 'cost_projection' not in state
