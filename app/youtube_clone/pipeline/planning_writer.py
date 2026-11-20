@@ -25,7 +25,7 @@ CAST_FIELDS = ("tag", "name", "look_summary", "voice_description")
 PLATE_FIELDS = ("tag", "location_name", "look_summary")
 ASSET_STYLE = (
     "Landscape 16:9, semi-realistic flat 2D Indian cel animation, clean bold outlines, "
-    "natural adult anatomy, teal rainy night and warm practical light, no lettering, logos, CGI or watermark."
+    "natural adult anatomy, story-specific lighting and weather, no lettering, logos, CGI or watermark."
 )
 V1 = "railway.one-minute-planning.v1"
 V2 = "railway.planning.v2"

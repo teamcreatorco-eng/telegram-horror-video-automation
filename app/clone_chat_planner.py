@@ -56,10 +56,10 @@ class DeepSeekWriter:
     def complete(self, prompt, *, max_tokens, temperature):
         self.check()
         writing_story = "the exact title is the only story input" in prompt
+        prompt += "\n" + youtube_clone_writer.setting_direction(self.folder)
         if writing_story:
             if image_model() == "qwen2511":
                 prompt += "\nUse at most two adult characters in this story and at most two people in any shot."
-            prompt += "\n" + youtube_clone_writer.setting_direction(self.folder)
             prompt += (
                 "\nEach line must work as one five-second shot. Before returning the script, silently trace "
                 "where each person's hands and the main prop are after each beat. If a line tells someone to "

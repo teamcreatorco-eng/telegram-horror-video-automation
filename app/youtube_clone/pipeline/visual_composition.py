@@ -75,7 +75,8 @@ def motion_contract(shot):
     narration = shot.get("narration", "")
     context = f"Story context only (not spoken audio or on-screen text): {narration}. " if narration else ""
     return (
-        context + f"Starting pose: {start}. Physical action: {action}. Finish: {end}. "
+        "FRAMING PRIORITY: If the supplied opening crops out a face or shows only hands, wrists, objects or a back-facing head, keep that face hidden for the entire clip. Never pan, tilt, zoom out or raise the character into view to reveal it, even if the action or end description asks for a facial reaction. Express only the visible hand/body action; a face reaction requires a separate face-visible shot. "
+        + context + f"Starting pose: {start}. Physical action: {action}. Finish: {end}. "
         f"Camera instruction: {camera}. "
         "Perform only the specified actor's action on the named target, in the stated direction. "
         "Show the required contact and release continuously; settle at the finishing pose without adding another action. "

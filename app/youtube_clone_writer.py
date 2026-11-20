@@ -110,8 +110,19 @@ def setting_direction(folder):
         choice = int(hashlib.sha256(folder.name.encode()).hexdigest()[:8], 16) % len(unused)
         saved = {"setting": unused[choice], "recent": [setting for setting in recent if setting]}
         store.save(path, saved)
+    seed = int(hashlib.sha256(folder.name.encode()).hexdigest()[:12], 16)
+    objects = ("a radio dial", "a ticket punch", "a measuring tape", "a brass weighing scale", "a lantern", "a wall clock", "a spool of thread", "a handwritten parcel label")
+    looks = ("an adult woman with a long angular face, short wavy hair and a rust work jacket", "a middle-aged man with a broad face, cropped hair and an indigo work shirt", "an older woman with a square face, silver braid and a maroon cotton sari", "a young adult man with a narrow face, curly hair and a cream kurta")
+    lights = ("dry late-afternoon amber sunlight", "warm lamplight with cool neutral shadows", "overcast daylight with earthy browns", "clear moonlight with one warm practical lamp")
+    variation = (f"For an unspecified topic use {objects[seed % len(objects)]} as the central clue. "
+                 f"Design the lead around {looks[(seed // 11) % len(looks)]}. "
+                 f"Use {lights[(seed // 37) % len(lights)]}. "
+                 "Explicit user story requirements take priority. These are new-story choices; keep them consistent within the story. "
+                 "Do not reuse the example's bangles plot, teal salwar woman, or haunted room by default. "
+                 "Change face shape, hairstyle, age, outfit and occupation, not just the name. "
+                 "Express the chosen location through its distinctive working equipment and architecture; do not turn every setting into the same ruined room. ")
     recent_text = ", ".join(saved["recent"]) or "none recorded"
-    return (f"Use this story location unless the supplied title explicitly requires a different one: {saved['setting']}. "
+    return (variation + f"Use this story location unless the supplied title explicitly requires a different one: {saved['setting']}. "
             f"Recent settings to avoid: {recent_text}. Establish the chosen physical space early and "
             "keep its layout consistent within this story. Camera reverses are allowed within that space.")
 
@@ -122,7 +133,7 @@ def assemble(draft, folder, title, seconds=60):
     project["idea"].update(status="done", items=[idea], selected_index=1, selected=idea)
     project.update(style_reference=STYLE_LOCK, writing_path="DeepSeek authoring using the Clone workflow")
     style = ("Landscape 16:9, semi-realistic flat 2D Indian cel animation, clean bold outlines, natural "
-             "adult anatomy, teal rainy night and warm practical light, no lettering, logos, CGI or watermark.")
+             "adult anatomy, story-specific lighting and weather, no lettering, logos, CGI or watermark.")
     for character in draft.characters:
         item = character.model_dump(exclude={"voice"})
         item.update(full_prompt=f"{character.look_summary}. Neutral full-body three-quarter pose and "
