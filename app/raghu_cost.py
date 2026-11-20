@@ -3,6 +3,8 @@ import hashlib
 import json
 import math
 
+HOST_FIELDS = ('machine_id', 'gpu_name', 'cpu_name', 'cpu_cores_effective', 'cpu_ram', 'gpu_ram', 'pcie_bw')
+
 
 def number(value):
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
@@ -64,3 +66,45 @@ def summarize_events(events):
                 warm_p90_seconds=warm[math.ceil(.9 * len(warm)) - 1] if warm else None,
                 render_seconds=sum(values), download_wall_seconds=wall,
                 qualifiable=bool(valid and sessions == 1 and set(starts) == set(done) and len(warm) >= 3))
+
+
+def host_signature(offer):
+    if any(offer.get(k) is None for k in HOST_FIELDS):
+        return None
+    return hashlib.sha256(json.dumps({k: offer[k] for k in HOST_FIELDS}, sort_keys=True).encode()).hexdigest()
+
+
+def _observation(records, offer, key, now):
+    signature = host_signature(offer)
+    usable = []
+    if signature is None:
+        return None
+    for row in records:
+        try:
+            if (row['host_signature'] != signature or row['workload_key'] != key
+                    or not 0 <= now - number(row['measured_at']) <= 7 * 86400
+                    or type(row['warm_samples']) is not int or row['warm_samples'] < 3
+                    or number(row['warm_p90_seconds']) <= 0 or number(row['first_seconds']) <= 0):
+                continue
+            usable.append(row)
+        except (TypeError, KeyError, ValueError):
+            continue
+    return max(usable, key=lambda r: r['measured_at']) if usable else None
+
+
+def measured_seconds(records, offer, key, now):
+    row = _observation(records, offer, key, now)
+    return row['warm_p90_seconds'] if row else None
+
+
+def offer_cost(offer, records, key, clips, overhead_seconds, download_gb, upload_gb, now):
+    row = _observation(records, offer, key, now)
+    seconds = row['warm_p90_seconds'] if row else 70
+    first_extra = max(0, row['first_seconds'] - seconds) if row and clips else 0
+    result = estimate_cost(float(offer['dph_total']), clips, seconds, overhead_seconds + first_extra,
+                           download_gb, float(offer['inet_down_cost']),
+                           upload_gb, float(offer['inet_up_cost']))
+    return dict(result, seconds_per_clip=seconds, first_clip_extra_seconds=first_extra,
+                speed_basis='measured_host_warm_p90' if row else 'unmeasured_estimate',
+                exclusions=['writing/API fees', 'Railway editing/hosting allocation', 'taxes',
+                            'unplanned retries', 'post-stop storage'])

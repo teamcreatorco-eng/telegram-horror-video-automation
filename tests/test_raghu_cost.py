@@ -1,6 +1,6 @@
 import math
 import pytest
-from app.raghu_cost import estimate_cost, summarize_events, workload_key
+from app.raghu_cost import estimate_cost, summarize_events, workload_key, host_signature, measured_seconds, offer_cost
 
 
 def events():
@@ -43,3 +43,42 @@ def test_workload_key_pins_worker_and_model_precision():
     k = workload_key([{'sha256': 'abc'}], b'approved-worker', 'nvfp4', 'ltx')
     assert k != workload_key([{'sha256': 'abc'}], b'changed-worker', 'nvfp4', 'ltx')
     assert k != workload_key([{'sha256': 'abc'}], b'approved-worker', 'fp8', 'ltx')
+
+
+def offer(machine=1, rate=.7):
+    return dict(machine_id=machine, dph_total=rate, gpu_name='RTX_5090', cpu_name='CPU',
+                cpu_cores_effective=8, cpu_ram=64000, gpu_ram=32000, pcie_bw=28,
+                inet_down_cost=0, inet_up_cost=0)
+
+
+def observation(o, seconds=55):
+    return dict(host_signature=host_signature(o), workload_key='approved', measured_at=100,
+                warm_samples=3, warm_p90_seconds=seconds, first_seconds=seconds+7)
+
+
+def test_more_expensive_hourly_host_can_win_complete_job_cost():
+    slow, fast = offer(1,.55), offer(2,.7)
+    records=[observation(slow,100), observation(fast,55)]
+    costs=[offer_cost(o, records, 'approved', 120, 600, 48, 4, 110) for o in [slow, fast]]
+    assert costs[1]['total_usd'] < costs[0]['total_usd']
+    assert costs[1]['speed_basis'] == 'measured_host_warm_p90'
+
+
+def test_unknown_speed_is_explicit_estimate():
+    result=offer_cost(offer(), [], 'approved', 120, 600, 48, 4, 110)
+    assert result['seconds_per_clip'] == 70
+    assert result['speed_basis'] == 'unmeasured_estimate'
+
+
+@pytest.mark.parametrize('change', [dict(measured_at=-700000), dict(measured_at=200),
+    dict(workload_key='other'), dict(warm_samples=2), dict(warm_p90_seconds=float('nan')),
+    dict(first_seconds=None)])
+def test_unusable_observations_do_not_qualify(change):
+    o=offer(); r={**observation(o), **change}
+    assert measured_seconds([r, {}, None], o, 'approved', 110) is None
+
+
+def test_cpu_allocation_change_invalidates_observation():
+    o=offer(); r=observation(o)
+    assert measured_seconds([r], {**o,'cpu_cores_effective':4}, 'approved', 110) is None
+    assert host_signature({}) is None
