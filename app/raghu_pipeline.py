@@ -1334,7 +1334,10 @@ def work(ident, folder, request, check, progress):
     setting = folder / "clone-story-setting.json"
     if setting.is_file():
         script = shot_plan["script"]
-        store.remember_script(ident, {"clone_setting": store.read(setting)["setting"]},
+        store.remember_script(ident, {"clone_setting": store.read(setting)["setting"],
+                              "title": shot_plan.get("title"),
+                              "cast": [{"tag": a["tag"], "look": a.get("identity_description") or a["prompt"]} for a in shot_plan.get("cast", [])],
+                              "locations": [a["prompt"] for a in shot_plan.get("locations", [])]},
                               script, hashlib.sha256(script.encode()).hexdigest())
     if planning_only:
         return "Script and storyboard ready · planning only"

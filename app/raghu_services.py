@@ -163,8 +163,10 @@ def checkpoint(folder, name, schema, prompt, check, validate=lambda value: [], *
 
 
 def choose_title(folder, check):
+    from .youtube_clone_writer import setting_direction
+    originality = setting_direction(folder)
     return checkpoint(folder, "raghu-topic.json", Topic,
-        "Choose one fictional Hindi folk-horror title in Devanagari. "
+        "Choose one fictional Hindi folk-horror title in Devanagari. " + originality
         + template("1", CATEGORY="Hindi folk horror", CONCEPT="Original fiction", NUMBER_OF_IDEAS=1),
         check).title
 
