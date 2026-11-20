@@ -32,10 +32,10 @@
 
 **Interfaces:** estimate_cost(rate, clips, seconds_per_clip, overhead_seconds, download_gb, download_rate, upload_gb, upload_rate, other_usd=0) -> dict; summarize_events(events) -> dict; workload_key(manifest, worker_bytes, quantization, motion_model) -> str.
 
-- [ ] Write tests: 120 clips at 50 sec and $0.70/hour cost $1.166667 motion; overhead/transfers/other costs are included; non-finite/negative inputs fail. Download wall time uses union of intervals. Duplicate IDs or multiple model sessions are not valid qualification evidence.
-- [ ] Run python -m pytest -q tests/test_raghu_cost.py; expect missing module failure.
-- [ ] Implement helpers and validate numeric/event inputs conservatively.
-- [ ] Run focused tests; expect pass. Commit task files only.
+- [x] Write tests: 120 clips at 50 sec and $0.70/hour cost $1.166667 motion; overhead/transfers/other costs are included; non-finite/negative inputs fail. Download wall time uses union of intervals. Duplicate IDs or multiple model sessions are not valid qualification evidence.
+- [x] Run python -m pytest -q tests/test_raghu_cost.py; expect missing module failure.
+- [x] Implement helpers and validate numeric/event inputs conservatively.
+- [x] Run focused tests; expect pass. Commit task files only.
 
 ### Task 2: Compatible historical host ranking
 
@@ -43,10 +43,10 @@
 
 **Interfaces:** host_signature(offer) -> str; measured_seconds(records, offer, key, now) -> float|None; offer_cost(offer, records, key, clips, overhead_seconds, download_gb, upload_gb, now) -> dict.
 
-- [ ] Write tests: higher-hourly fast host wins on total cost; unknown host keeps explicit 70-second estimate; mismatched CPU allocation/workload, stale (>7 days), insufficient warm samples (<3), malformed and nonfinite records do not qualify.
-- [ ] Run focused tests and observe failures for missing helpers.
-- [ ] Implement stable host fingerprint and conservative warm p90 plus separately recorded first-clip overhead.
-- [ ] Run focused tests; expect pass. Commit task files only.
+- [x] Write tests: higher-hourly fast host wins on total cost; unknown host keeps explicit 70-second estimate; mismatched CPU allocation/workload, stale (>7 days), insufficient warm samples (<3), malformed and nonfinite records do not qualify.
+- [x] Run focused tests and observe failures for missing helpers.
+- [x] Implement stable host fingerprint and conservative warm p90 plus separately recorded first-clip overhead.
+- [x] Run focused tests; expect pass. Commit task files only.
 
 ### Task 3: Rental integration and failure-safe telemetry
 
@@ -54,12 +54,14 @@
 
 **Interfaces:** record_rental_cost(folder, catalog_path, now) -> dict|None; quote loads records once and uses offer_cost without changing GPU/visual settings.
 
-- [ ] Write tests: finish_rental records valid events before existing cleanup; corrupt telemetry cannot prevent cleanup; runtime worker fingerprints change qualification; selection uses same estimate for sorting and admission.
-- [ ] Run integration tests; observe failure before wiring.
-- [ ] Persist allowlisted offer signature and cost estimate in rental journal; record event summary and actual elapsed rental estimate at cleanup, separately excluding unknown taxes/storage/writing/hosting. Do not log credentials or full environment.
-- [ ] Run focused tests, then full pytest suite in credential-free worktree with live HTTP blocked, and compileall. Record pre-existing failures rather than claiming full green.
-- [ ] Verify approved worker hashes unchanged, commit task files only, obtain one independent whole-change review, fix material findings with regression tests.
+- [x] Write tests: finish_rental records valid events before existing cleanup; corrupt telemetry cannot prevent cleanup; runtime worker fingerprints change qualification; selection uses same estimate for sorting and admission.
+- [x] Run integration tests; observe failure before wiring.
+- [x] Persist allowlisted offer signature and cost estimate in rental journal; record event summary and actual elapsed rental estimate at cleanup, separately excluding unknown taxes/storage/writing/hosting. Do not log credentials or full environment.
+- [x] Run focused tests, then full pytest suite in credential-free worktree with live HTTP blocked, and compileall. Record pre-existing failures rather than claiming full green.
+- [x] Verify approved worker hashes unchanged, commit task files only, obtain one independent whole-change review, fix material findings with regression tests.
 
 ## Handoff
 
 User selected inline execution. Do not deploy or benchmark paid GPUs. Explain that observed host records require future approved generation before reliable ranking is possible. Do not report the speed/price target achieved from offline checks.
+
+Verified: 204 offline tests passed; compileall and frozen-file diff passed. Independent review fixes covered. No deployment or paid benchmark.
