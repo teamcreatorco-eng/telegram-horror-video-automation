@@ -12,6 +12,8 @@ from tempfile import TemporaryDirectory
 from typing import Protocol
 
 from .visual_composition import SHOT_RULES
+from .scene_records import VERSION as SCENE_RECORD_VERSION, SCHEMA as SCENE_RECORD_SCHEMA
+from .scene_records import validate_record, compile_record, repair_records
 from .anthropic_client import ScriptClient
 from .models import new_project, save
 from .one_minute import BG_TAG, CHAR_TAG, json_object, validate
@@ -134,7 +136,7 @@ def check_shots(result, speech, assets, *, editorial_checks=True):
     cast = {c["tag"] for c in assets["characters"]}
     plates = {b["tag"] for b in assets["backgrounds"]}
     for number, (shot, beat) in enumerate(zip(shots, speech, strict=True), 1):
-        fields(shot, SHOT_FIELDS)
+        fields(shot, SHOT_FIELDS, allowed_extra=("scene_record", "opening_character_tags"))
         text_fields(shot, ("title", "background_tag", *VISUAL_FIELDS))
         if type(shot["scene_number"]) is not int or shot["scene_number"] != number or shot["background_tag"] not in plates:
             raise ValueError(f"Shot {number}: unexpected number or undefined background")
@@ -145,6 +147,18 @@ def check_shots(result, speech, assets, *, editorial_checks=True):
             raise ValueError(f"Shot {number}: the speaker must be visible")
         if editorial_checks and shot["first_frame_description"] in {shot["visual_action"], shot["ending_state"]}:
             raise ValueError(f"Shot {number}: separate the opening from the action and ending")
+
+
+def check_scene_envelopes(result, count):
+    """Check only the response envelope; repair individual records separately."""
+    fields(result, ("scenes",))
+    if not isinstance(result["scenes"], list) or len(result["scenes"]) != count:
+        raise ValueError(f"Expected exactly {count} scene records")
+    for number, scene in enumerate(result["scenes"], 1):
+        fields(scene, ("scene_number", "title", "sound_design"), allowed_extra=("scene_record",))
+        text_fields(scene, ("title", "sound_design"))
+        if type(scene["scene_number"]) is not int or scene["scene_number"] != number:
+            raise ValueError("Scenes must be numbered in locked speech order")
 
 
 def check_review(review, draft, speech):
@@ -285,16 +299,56 @@ def plan_title(title: str, duration_seconds: int, *, project_id: str, model: Wri
     scenes_prompt = scenes_template + "\n" + rules + SHOT_RULES + example_note + (
         f"\nLocked speech by shot (array order is shot order): {locked_speech}"
         "\nReturn ONLY a JSON object with scenes array, one item for every line in that order. "
-        f"Each item uses exactly these field names: {', '.join(SHOT_FIELDS)}. "
-        "scene_number is an integer starting at 1; character_tags is a list of visible cast IDs; other fields are strings. "
+        "Each item uses exactly four fields: scene_number, title, sound_design, scene_record. "
+        "scene_number is an integer starting at 1; scene_record is an object; title and sound_design are strings. "
         "Use short Hindi shot titles and English shot directions. No finished image or video prompts; Python builds them. "
-        "Use first_frame_description for the static frame before the action, and ending_state for the result after the action. "
+        "Put the static frame before action in scene_record poses/before states; put the result in after states. "
         "Preserve all current scene-specific states explicitly across angle changes. The JSON contract supersedes the template's output layout."
     )
-    shots = ask(model, scenes_prompt, lambda x: check_shots(x, speech, assets, editorial_checks=False), max(4000, count * 340))
+    scenes_prompt += "\n" + SCENE_RECORD_SCHEMA
+    shots = ask(model, scenes_prompt, lambda x: check_scene_envelopes(x, count), max(4000, count * 500))
+    # Structural compilation runs before any rental. It is not an image reviewer.
+    record_history = []
+    known_cast = {c["tag"] for c in assets["characters"]}
+    locations = {b["tag"] for b in assets["backgrounds"]}
+    original_shots = deepcopy(shots["scenes"])
+    for index, (shot, beat) in enumerate(zip(shots["scenes"], speech, strict=True)):
+        def check_record(record):
+            validate_record(record, known_cast, locations)
+            if beat["speaker"] != NARRATOR and beat["speaker"] not in [p["tag"] for p in record["visible"]]:
+                raise ValueError("The dialogue speaker must be visible")
+
+        def correct_record(_index, record, reason, simplify):
+            previous = shots["scenes"][index - 1].get("scene_record") if index else None
+            following = original_shots[index + 1] if index + 1 < len(original_shots) else None
+            prompt = (
+                "Correct ONLY this scene record. Preserve its exact narrated event and approved identities. "
+                "Do not rewrite speech or other scenes. Keep adjacent location and object states consistent. "
+                + ("Use the simplest framing for the SAME event, one action, fixed camera. " if simplify else "")
+                + SCENE_RECORD_SCHEMA
+                + f"\nLocked speech: {as_json(beat)}\nAssets: {as_json(assets)}"
+                + f"\nOriginal shot: {as_json(original_shots[index])}\nRecord: {as_json(record)}"
+                + f"\nPrevious corrected record: {as_json(previous)}\nNext shot: {as_json(following)}"
+                + f"\nStructural error: {reason}\nReturn ONLY {{\"scene_record\":{{...}}}}."
+            )
+            # Each correction gets one response; the outer bounded loop owns retries.
+            response = model.complete(prompt, max_tokens=1800, temperature=0)
+            try:
+                return json_object(response).get("scene_record")
+            except ValueError:
+                return None
+
+        records, repairs = repair_records([shot.get("scene_record")], check_record, correct_record)
+        shot["scene_record"] = records[0]
+        shot.update(compile_record(records[0]))
+        shot["effects"] = (records[0]["action"]["movement"]
+                           if records[0]["action"]["kind"] == "environmental_effect" else "Preserve the opening lighting and style")
+        for repair in repairs:
+            repair["scene_number"] = index + 1
+        record_history.extend(repairs)
     draft = {**assets, **shots}
     review_history = []
-    # No AI continuity editor, repair passes, or editorial rejection gate.
+    # No AI continuity editor or visual rejection gate.
 
     project = new_project(project_id, "B", title, 0)
     idea = {"index": 1, "title": title, "hook": speech[0]["line"], "entity_archetype": "Pret-aatma"}
@@ -312,10 +366,11 @@ def plan_title(title: str, duration_seconds: int, *, project_id: str, model: Wri
         project["scenes"].append({**shot, "speaker": speaker,
                                   "narration_text": beat["line"] if speaker == NARRATOR else "",
                                   "devanagari_dialogue": beat["line"] if speaker != NARRATOR else ""})
-    project.update(style_reference=STYLE_LOCK, writing_path="Title-only drafting; no AI review or editorial rejection.",
+    project.update(style_reference=STYLE_LOCK, writing_path="Title-only drafting; compiled scene records; no AI visual review.",
                    raw_stages={"story_prompt": story_template, "characters_prompt": characters_prompt,
                                "backgrounds_prompt": backgrounds_prompt, "scenes_prompt": scenes_prompt},
-                   planning_review=review_history)
+                   planning_review=review_history, scene_record_version=SCENE_RECORD_VERSION,
+                   scene_record_repairs=record_history, original_scene_draft=original_shots)
     validate(project, scene_count=len(project["scenes"]))
     return project
 

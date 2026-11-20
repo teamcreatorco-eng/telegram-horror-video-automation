@@ -2,6 +2,30 @@
 
 SHOT_RULES = """
 VISUAL COMPOSITION CONTRACT:
+Write the opening, action and ending as a causal sequence using the same named actor,
+target prop and location. The opening must visibly contain the prerequisites for the
+literal narrated event. For placing a tile in a kiln, show that actor holding ONE tile
+beside the accessible kiln opening; do not replace this with another person gripping
+their wrist. For opening a door from inside, establish the interior side, closed door,
+handle within reach and space for its hinge swing. An exterior establishing view cannot
+stand in for that action. Never substitute a thematic illustration for its physical setup.
+Use short concrete directions like the approved examples: camera; actor and one action;
+visible ending. Background descriptions must not override this shot's crop or cast.
+Distinguish the moving subject from the surface receiving an effect. Footprints moving
+up stairs means wet footprint MARKS appear on stationary stair treads in sequence;
+the stairs do not move and no person needs to climb them. For an unseen source, use
+an empty environment insert with character_tags=[] and explicitly zero human limbs.
+Keep observers off screen unless their reaction is the subject of this particular shot.
+For progressive effects specify the opening state and order: first mark on the lowest
+tread, next tread clean; action adds the next marks one tread at a time from bottom to
+top; ending preserves earlier marks. Keep stair geometry fixed. Never illustrate a
+sequential effect with a person sitting, crouching or standing on the target surface.
+Do not put every stage of an action in one still. Generate the single opening instant;
+put the ordered changes only in visual_action and ending_state. Continue the established
+effect state into the next shot instead of resetting it or adding an unrelated observer.
+Mentioned people, memories and offscreen voices do not become visible cast. When a man
+speaks to another established man, preserve those identities; do not add a girl as a
+generic listener. A location reference provides geometry, never permission to add cast.
 In sound_design, start with one score tag [score:unease], [score:suspense], or [score:dread].
 Add only audible scene effects as [effect:name@fraction], where fraction is 0 to 1 within
 this shot and name is fire, rain, wind, footstep, knock, creak, latch, rustle, thud, sting,
@@ -72,17 +96,14 @@ def motion_contract(shot):
     end = shot.get("end", {}).get("staging", "Finish the requested action naturally")
     action = shot.get("visual_action") or shot.get("motion", "")
     camera = shot.get("camera") or "Hold the supplied framing; no automatic zoom or orbit"
-    narration = shot.get("narration", "")
-    context = f"Story context only (not spoken audio or on-screen text): {narration}. " if narration else ""
     return (
-        "FRAMING PRIORITY: If the supplied opening crops out a face or shows only hands, wrists, objects or a back-facing head, keep that face hidden for the entire clip. Never pan, tilt, zoom out or raise the character into view to reveal it, even if the action or end description asks for a facial reaction. Express only the visible hand/body action; a face reaction requires a separate face-visible shot. "
-        + context + f"Starting pose: {start}. Physical action: {action}. Finish: {end}. "
-        f"Camera instruction: {camera}. "
+        f"Camera instruction: {camera}. Starting pose: {start}. Physical action: {action}. Finish: {end}. "
         "Perform only the specified actor's action on the named target, in the stated direction. "
         "Show the required contact and release continuously; settle at the finishing pose without adding another action. "
         "Keep hands attached to their own arms, body proportions stable, feet grounded and object contact physical. "
         "Preserve object count, shape, size, material and ownership except for the explicitly scripted change. "
         "Preserve established fire unless extinguishing or ignition is requested. "
         "Keep hand/prop inserts within their opening crop; do not reveal an unseen face. "
+        "If the ending asks to reveal a face absent from the opening, keep it hidden and finish the visible action. "
         "Maintain screen direction and room geometry; no unrequested zoom, orbit or angle switch. "
     )

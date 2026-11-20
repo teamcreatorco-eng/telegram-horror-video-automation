@@ -40,6 +40,10 @@ def save_stage(path: Path, project: dict, name: str, raw: str):
 
 
 def make_prompts(scene: dict, chars: dict, bgs: dict) -> dict:
+    if "scene_record" in scene:
+        from .scene_records import validate_record, compile_record
+        validate_record(scene["scene_record"], set(chars), set(bgs))
+        scene.update(compile_record(scene["scene_record"]))
     bg = scene["background_tag"]
     tags = scene["character_tags"]
     speaker = scene["speaker"]

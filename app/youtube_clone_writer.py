@@ -205,11 +205,24 @@ def renderer_plan(project, draft, seconds=60):
             transition="continuous", time_cut_cue="", score=score, sound_cues=cues,
             sound_design=row.sound_design,
         ))
+        if "scene_record" in source:
+            from .youtube_clone.pipeline.scene_records import VERSION, compile_record
+            record = source["scene_record"]
+            compiled = compile_record(record)
+            shot = shots[-1]
+            shot.update(scene_record=record, scene_record_version=VERSION,
+                        camera=compiled["camera"], visual_action=compiled["visual_action"])
+            shot["start"].update(staging=compiled["first_frame_description"],
+                                 props={o["id"]: o["before"] for o in record["objects"]})
+            shot["end"].update(staging=compiled["ending_state"],
+                               props={o["id"]: o["after"] for o in record["objects"]})
     result = dict(version=4, planner="youtube_clone", title=project["idea"]["selected"]["title"], seconds=seconds,
                   script=project["script"]["raw_text"], synopsis=draft.summary, shots=shots,
                   cast=[dict(tag=a["tag"][1:], prompt=a["full_prompt"], identity_description=a["look_summary"])
                         for a in project["characters"]],
                   locations=[dict(tag=b["tag"][1:], prompt=b["full_prompt"]) for b in project["backgrounds"]])
+    if project.get("scene_record_version"):
+        result["scene_record_version"] = project["scene_record_version"]
     return result, preview
 
 

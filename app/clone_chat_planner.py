@@ -80,7 +80,14 @@ class DeepSeekWriter:
                     "or one reaction. Keep the same object and show each change of position or ownership. "
                     "No travel, time jumps, off-screen exchanges or unclear pronouns in the final reveal."
                 )
-        if "Locked speech by shot" in prompt:
+        if "Locked speech by shot" in prompt and "Every shot includes scene_record" in prompt:
+            prompt += (
+                "\nUse ONLY the four requested shot fields. Put all staging in scene_record. "
+                "Carry important object states and character positions from the previous record into the next. "
+                "The opening pose/before state must set up action.movement; the end_pose/after state is its result. "
+                "Do not add separate visual_action or ending_state fields."
+            )
+        elif "Locked speech by shot" in prompt:
             prompt += (
                 "\nBuild in shot order. Carry the exact side, contact and state of each important hand and prop "
                 "from the prior ending into the next opening. Describe the actual change in visual_action, "
@@ -171,6 +178,8 @@ class DeepSeekWriter:
             self.progress("Clone YouTube is reviewing and repairing shot continuity", max(18, floor))
         elif "Locked speech by shot" in prompt:
             self.progress("Clone YouTube is staging shots from the locked Hindi script", max(14, floor))
+        elif "Correct ONLY this scene record" in prompt:
+            self.progress("Correcting one scene's staging before GPU rental", max(14, floor))
         elif "Return both stages" in prompt:
             self.progress("Clone YouTube is preparing character and background references", max(12, floor))
         for use_reasoning in (True, False) if reasoning else (False,):

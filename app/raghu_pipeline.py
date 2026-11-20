@@ -188,6 +188,13 @@ def still_batches(plan):
                     + item["retake_prompt"])
         if item.get("strict_opening"):
             item["retake_prompt"] = item["prompt"]
+        if "scene_record" in shot:
+            # Persist the exact structured input beside the prompt and reference list.
+            item["scene_record"] = shot["scene_record"]
+            item["scene_record_version"] = shot["scene_record_version"]
+            item["planning_input_sha256"] = hashlib.sha256(
+                json.dumps(shot["scene_record"], sort_keys=True, ensure_ascii=False).encode("utf-8")
+            ).hexdigest()
         starts.append(item)
     return canon, starts
 
@@ -474,12 +481,14 @@ def end_frame_source_signature(folder, item):
 
 def opening_motion_prompt(shot):
     physical_brief = motion_contract(shot)
+    if motion_model() == "hunyuan15" and shot.get("narration"):
+        physical_brief += f"Story context only (not spoken audio): {shot['narration']}. "
     if not shot.get("simple_prompt"):
         mouth = "Keep all mouths closed."
         if shot.get("speaker_description"):
             mouth = (f"Only this speaker moves their mouth during the brief line: {shot['speaker_description']}. "
                      "Keep other mouths closed. Hindi dialogue is added in editing.")
-        return (physical_brief + f"{shot.get('clone_motion', shot['motion'])} END: {shot.get('end', {}).get('staging', '')} "
+        return (physical_brief +
                 "Preserve the opening image's clean hand-drawn 2D finish, character identity, clothing and "
                 "fixed architecture. Show clear body weight and contact. One continuous shot, "
                 f"no internal cuts, fades, duplicate objects or extra people. {mouth}")

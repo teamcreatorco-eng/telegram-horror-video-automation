@@ -223,7 +223,12 @@ def finish_rental(journal, preserve):
     """Keep the generation failure visible when the provider also fails cleanup."""
     original = sys.exc_info()[1]
     try:
-        close_rental(journal, preserve)
+        if original is None and os.getenv("RAGHU_DESTROY_ON_SUCCESS", "false").lower() == "true":
+            # Successful generation has copied its verified assets off the GPU.
+            # Old recovery markers must not keep a completed rental billed for disk.
+            destroy(journal)
+        else:
+            close_rental(journal, preserve)
     except Exception as cleanup_error:
         if original is None:
             raise
