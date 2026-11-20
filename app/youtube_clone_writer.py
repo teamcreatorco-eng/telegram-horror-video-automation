@@ -290,6 +290,15 @@ def plan(folder, title, choose_topic, check, progress, *, seconds=60):
         stages = ledger.setdefault("retry_stage_attempts", {}).setdefault(round_id, {})
 
     def stage(name, schema, prompt, max_tokens, check_value):
+        from . import script_options
+        if name == "script" and script_options.enabled(folder):
+            def generate(number, extra):
+                progress(f"Writing script option {number} of 2", 9 + number)
+                return stage(f"option-{number}-script", schema, prompt + extra,
+                             max_tokens, check_value).model_dump()
+            selected = schema.model_validate(script_options.choose(folder, generate))
+            check_value(selected)
+            return selected
         path = folder / f"youtube-clone-{name}.json"
         if path.exists():
             saved = schema.model_validate(store.read(path))

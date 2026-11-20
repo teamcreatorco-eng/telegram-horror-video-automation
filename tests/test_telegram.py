@@ -334,3 +334,27 @@ def test_raghu_asks_duration_before_queuing_full_production(service, monkeypatch
     assert job["request"]["choose_topic"]
     assert job["request"]["mode"] == "live"
     assert not job["request"].get("raghu_plan_only")
+
+
+def test_script_choices_owned_selection_and_full_delivery(service, monkeypatch):
+    from app import script_options
+    service.handle(update())
+    ident = tg.latest(service.bot, 101)["id"]
+    store.save(store.folder(ident) / "script-options.json", {"options": [
+        {"speech": [{"line": "First complete story"}]},
+        {"speech": [{"line": "Second complete story"}]}]})
+    store.update(ident, status="awaiting_script", stage="Choose script 1 or 2", progress=12)
+    queued = []
+    monkeypatch.setattr(pipeline, "enqueue", lambda ident: queued.append(ident) or True)
+    service.notify()
+    assert any("First complete story" in (fields or {}).get("text", "") for _, fields, _ in service.api.calls)
+    assert any("Second complete story" in (fields or {}).get("text", "") for _, fields, _ in service.api.calls)
+    def pick(uid, update_id):
+        service.handle({"update_id": update_id, "callback_query": {
+            "id": str(update_id), "data": f"script2:{ident}", "from": {"id": uid},
+            "message": {"chat": {"id": uid, "type": "private"}}}})
+    pick(202, 2)
+    assert not queued
+    pick(101, 3)
+    assert queued == [ident]
+    assert store.read(store.folder(ident) / "script-options.json")["selected"] == 2

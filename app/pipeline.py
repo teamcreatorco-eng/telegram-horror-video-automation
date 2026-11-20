@@ -6,6 +6,7 @@ from .providers import demo_image
 from .planning import plan, demo_plan, publishing
 from . import production
 from . import elevenlabs_tts
+from .script_options import AwaitingScriptChoice
 
 pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='render')
 active=set(); lock=Lock()
@@ -178,6 +179,9 @@ def work(ident,lease=None):
             for path in folder.iterdir():
                 if path.suffix in {'.json','.png','.srt','.wav','.mp3','.mp4'} and '.operation.' not in path.name and not path.name.startswith(('clip-','raw-')) and path.name!='joined.mp4': z.write(path,path.name)
         progress('Complete',100); store.update(ident,status='complete')
+    except AwaitingScriptChoice:
+        store.update(ident, status='awaiting_script', stage='Choose script 1 or 2 in Telegram',
+                     progress=12, error=None)
     except Cancelled:
         if not lease or store.get(ident)['worker']==lease[0]:store.update(ident,status='cancelled',stage='Stopped; saved assets can be resumed')
     except Exception as exc:

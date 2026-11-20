@@ -126,19 +126,22 @@ case "$1" in
       python -m venv --without-pip --system-site-packages video-env
       python -m pip --python video-env/bin/python install transformers==5.14.1 accelerate safetensors huggingface-hub av openimageio colour-science 'cloudpickle>=3.1' 'scipy>=1.14' einops pillow tqdm
       python -m pip --python video-env/bin/python install --no-deps ./engine/packages/ltx-core ./engine/packages/ltx-pipelines
-      if [ "${LTX_QUANTIZATION:-fp8}" = nvfp4 ]; then
+      video-env/bin/python download_video_only.py
+      touch video-env/.ready
+    fi
+    if [ "${LTX_QUANTIZATION:-fp8}" = nvfp4 ]; then
+      if [ ! -f video-env/.nvfp4-ready ]; then
         export PATH=/usr/local/cuda/bin:$PATH TORCH_CUDA_ARCH_LIST=12.0 MAX_JOBS=4
         python -m pip --python video-env/bin/python install setuptools wheel ninja
-        command -v nvcc
-        (python -m pip --python video-env/bin/python install --no-deps --no-build-isolation ./engine/packages/ltx-kernels >results/kernels.log 2>&1) &
-        build_pid=$!
-      fi
-      video-env/bin/python download_video_only.py
-      if [ "${LTX_QUANTIZATION:-fp8}" = nvfp4 ]; then
-        wait "$build_pid"
+        if ! command -v nvcc >/dev/null; then
+          unset CUDA_HOME CUDA_PATH
+          python -m pip --python video-env/bin/python install 'cuda-toolkit[nvcc,cccl]==13.0.*'
+        fi
+        python -m pip --python video-env/bin/python install --no-deps --no-build-isolation ./engine/packages/ltx-kernels >results/kernels.log 2>&1
         video-env/bin/python -c 'from ltx_core.quantization.nvfp4 import require_nvfp4; require_nvfp4()'
+        touch video-env/.nvfp4-ready
       fi
-      touch video-env/.ready
+      video-env/bin/python -c 'from ltx_core.quantization.nvfp4 import require_nvfp4; require_nvfp4()'
     fi
     if [ "$1" = motion ]; then
       video-env/bin/python videos.py

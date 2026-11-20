@@ -202,6 +202,17 @@ class DeepSeekWriter:
         store.save(path, {"content": content, "usage": result.get("usage"), "model": result.get("model")})
         return bind_locked_cast(content, locked_cast) if locked_cast else content
 
+    def select_story(self, prompt, validate, tokens):
+        from . import script_options
+        if not script_options.enabled(self.folder):
+            return planning_writer.ask(self, prompt, validate, tokens)
+        def generate(number, extra):
+            self.progress(f"Writing script option {number} of 2", 9 + number)
+            return planning_writer.ask(self, prompt + extra, validate, tokens)
+        value = script_options.choose(self.folder, generate)
+        validate(value)
+        return value
+
     def record_review_issues(self, content):
         try:
             issues = planning_writer.json_object(content).get("issues")

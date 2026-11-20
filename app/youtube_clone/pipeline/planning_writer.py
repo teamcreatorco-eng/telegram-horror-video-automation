@@ -262,7 +262,9 @@ def plan_title(title: str, duration_seconds: int, *, project_id: str, model: Wri
     def check_speech(value):
         check_story(value, count, low, high, editorial_margin=short_editorial_margin, editorial_checks=False)
 
-    story = ask(model, story_prompt, check_speech, max(2500, count * 180))
+    selector = getattr(model, "select_story", None)
+    story = (selector(story_prompt, check_speech, max(2500, count * 180)) if selector
+             else ask(model, story_prompt, check_speech, max(2500, count * 180)))
     speech = story["speech"]
     script = "\n".join(beat["line"] for beat in speech)
     locked_speech = as_json(speech)

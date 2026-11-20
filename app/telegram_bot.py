@@ -417,6 +417,8 @@ class Service:
                 self.ask_duration(cid)
                 return
             request = {**pending, "duration_seconds": duration}
+            if not planning_only:
+                request["script_options"] = True
         if request['mode']=='live' and smoke_mode != 'review' and os.getenv('ALLOW_PAID_GENERATION','false').lower()!='true':
             self.api.text(cid,'Live production is disabled in the deployment settings.');return
         if raghu and request['mode']=='live' and not smoke_mode and not planning_only:
@@ -445,6 +447,24 @@ class Service:
         if chat.get("type") != "private" or user.get("is_bot") or not allowed(user.get("id"), chat.get("id")):
             return
         cid, uid = str(chat["id"]), str(user["id"])
+        choice = re.fullmatch(r"script([12]):([a-f0-9]{32})", query.get("data", ""))
+        if choice:
+            from . import script_options
+            number, ident = choice.groups()
+            with store.db() as c:
+                owned = c.execute("SELECT job_id FROM telegram_jobs WHERE bot=? AND chat_id=? AND user_id=? AND job_id=?",
+                                  (self.bot, cid, uid, ident)).fetchone()
+            job = store.get(ident) if owned else None
+            valid = bool(job and job['status'] == 'awaiting_script')
+            self.api.call("answerCallbackQuery", {"callback_query_id": query['id'],
+                          "text": "Script selected." if valid else "This choice is no longer available."})
+            if valid:
+                script_options.select(store.folder(ident), int(number))
+                if pipeline.enqueue(ident):
+                    with store.db() as c:
+                        c.execute("UPDATE telegram_jobs SET delivery='pending',last_text=NULL WHERE job_id=?", (ident,))
+                    self.api.text(cid, f"Script {number} selected. Preparing its characters and scene prompts.")
+            return
         action = re.fullmatch(r"(retry|new):([a-f0-9]{32})", query.get("data", ""))
         if not action:
             return
@@ -467,11 +487,27 @@ class Service:
         }})
 
     def send_status(self, cid, job, *, detailed=False):
+        if job['status'] == 'awaiting_script':
+            return self.send_script_choices(cid, job)
         message = status_text(job, detailed=detailed)
         if recovery_job(job):
             return self.api.call("sendMessage", {"chat_id": cid, "text": message,
                                  "reply_markup": recovery_markup(job)})
         return self.api.text(cid, message)
+
+    def send_script_choices(self, cid, job):
+        from . import script_options
+        packet = store.read(store.folder(job['id']) / "script-options.json")
+        for number, value in enumerate(packet["options"], 1):
+            text = f"Script option {number}\n\n" + script_options.script_text(value)
+            # Telegram limits message length; never truncate a long script.
+            for start in range(0, len(text), 3500):
+                self.api.text(cid, text[start:start + 3500])
+        return self.api.call('sendMessage', {'chat_id': cid,
+            'text': 'Which script should become your video? No GPU has been rented for this job.',
+            'reply_markup': {'inline_keyboard': [[
+                {'text': 'Use script 1', 'callback_data': f"script1:{job['id']}"},
+                {'text': 'Use script 2', 'callback_data': f"script2:{job['id']}"}]]}})
 
     def notify(self):
         with store.db() as c:rows=[dict(r) for r in c.execute("SELECT t.* FROM telegram_jobs t JOIN jobs j ON j.id=t.job_id LEFT JOIN telegram_reviews r ON r.job_id=t.job_id WHERE t.bot=? AND t.delivery NOT IN ('blocked') AND (t.delivery IN ('pending','sending') OR j.status IN ('running','queued') OR (j.status='complete' AND t.delivery='sent' AND r.prompt_message IS NULL)) ORDER BY t.notified LIMIT 100",(self.bot,))]
@@ -492,7 +528,7 @@ class Service:
             with store.db() as c:c.execute("UPDATE telegram_jobs SET delivery='uncertain' WHERE job_id=?",(job['id'],))
             self.api.text(row['chat_id'],'Video delivery was interrupted. If it did not arrive, use /video to request it again.');return
         if row['last_text']!=text and (time.time()-row['notified']>=10 or job['status'] not in ('running','queued')):
-            if job['status'] in ('failed', 'paused'):
+            if job['status'] in ('failed', 'paused', 'awaiting_script'):
                 # Edits do not notify the user of a production that needs attention.
                 row['message_id'] = None
             if row['message_id']:
@@ -508,7 +544,7 @@ class Service:
                 c.execute("UPDATE telegram_jobs SET delivery='stopped' WHERE job_id=?", (job['id'],))
         elif job['status']=='complete' and row['delivery']=='pending':self.deliver(row,job)
         elif job['status']=='complete' and row['delivery']=='sent':self.ask_for_review(row,job)
-        elif job['status'] in ('failed','paused','cancelled'):
+        elif job['status'] in ('failed','paused','cancelled','awaiting_script'):
             with store.db() as c:c.execute("UPDATE telegram_jobs SET delivery='stopped' WHERE job_id=?",(job['id'],))
 
     def send_images(self, cid, job):
