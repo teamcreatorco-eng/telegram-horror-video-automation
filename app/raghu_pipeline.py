@@ -1320,11 +1320,8 @@ def work(ident, folder, request, check, progress):
         if youtube_clone_writer.enabled(seconds):
             if not planning_only and uses_ending_image():
                 raise RuntimeError("Clone YouTube production requires only the opening image.")
-            if seconds <= 300 and not (folder / "youtube-clone-script.json").exists():
-                from . import clone_chat_planner
-                writer = clone_chat_planner
-            else:
-                writer = youtube_clone_writer
+            from . import clone_chat_planner
+            writer = clone_chat_planner
             shot_plan = writer.plan(folder, request["title"], request.get("choose_topic"),
                                     check, progress, seconds=seconds)
         else:

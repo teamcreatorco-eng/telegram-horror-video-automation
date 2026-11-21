@@ -75,8 +75,8 @@ def ask(model, prompt, check, tokens, *, attempts=3):
 
 
 def duration_limits(seconds):
-    if type(seconds) is not int or not 30 <= seconds <= 300:
-        raise ValueError("Duration must be an integer from 30 to 300 seconds")
+    if type(seconds) is not int or not 30 <= seconds <= 600:
+        raise ValueError("Duration must be an integer from 30 to 600 seconds")
     return (seconds + 2) // 5, round(seconds * 130 / 60), round(seconds * 155 / 60)
 
 

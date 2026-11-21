@@ -213,12 +213,26 @@ class DeepSeekWriter:
 
     def select_story(self, prompt, validate, tokens):
         from . import script_options
-        if not script_options.enabled(self.folder):
+        old = self.folder / 'youtube-clone-script.json'
+        if old.is_file():
+            value = store.read(old)
+        elif script_options.enabled(self.folder):
+            def generate(number, extra):
+                self.progress(f"Writing script option {number} of 2", 9 + number)
+                return planning_writer.ask(self, prompt + extra, validate, tokens)
+            value = script_options.choose(self.folder, generate)
+        else:
             return planning_writer.ask(self, prompt, validate, tokens)
-        def generate(number, extra):
-            self.progress(f"Writing script option {number} of 2", 9 + number)
-            return planning_writer.ask(self, prompt + extra, validate, tokens)
-        value = script_options.choose(self.folder, generate)
+        if 'beats' in value:
+            # Carry selected legacy speech forward; do not reroll or shorten approved lines.
+            locked = [dict(speaker=b['speaker'], line=b['speech']) for b in value['beats']]
+            def check_locked(story):
+                validate(story)
+                if story['speech'] != locked:
+                    raise ValueError('Preserve every locked speaker and Hindi line exactly in order.')
+            return planning_writer.ask(self, prompt + '\nThis is a saved, approved script. Declare its canonical cast '
+                'and entity for the current planner, but do not write another story or change speech. '
+                '\nLocked speech: ' + json.dumps(locked, ensure_ascii=False), check_locked, tokens)
         validate(value)
         return value
 
