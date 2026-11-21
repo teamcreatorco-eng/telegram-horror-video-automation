@@ -772,6 +772,11 @@ def generate(folder, ident, shot_plan, check, progress):
         recover_reviews(progress, 42)
     missing = [shot for shot in shots if not approved_motion(shot)]
     if not missing and not raghu_narration.pending_clone(folder, shots):
+        journal=folder/'raghu-rental.json'
+        if journal.is_file() and not store.read(journal).get('destroyed'):
+            from .raghu_vast import finish_rental
+            check()
+            finish_rental(journal,True)
         return
     recovery_options = {"resume_seconds": selection["resume_seconds"]} if selection else {"progress": progress}
     recovery = folder / "vast-preserve-and-replace.json"
@@ -909,6 +914,9 @@ def animate_stills(remote, folder, missing, successors, check, progress):
             logging.warning("%s download %s: %s bytes in %.1fs", model_name,
                             event["file"], event["bytes"], event["seconds"])
     progress(f"Animating the starting images with {model_name}", 56)
+    # Old queue manifests are history, not new work for a restarted watch process.
+    remote.push([ASSETS/'motion_recovery.py'])
+    remote.phase('python motion_recovery.py --park',60)
     remote.phase("{ nohup env RAGHU_WATCH=1 bash worker.sh motion >results/motion.log 2>&1 </dev/null & echo $! > motion.pid; }", 30)
     blocked = render_motion_queue(remote, folder, missing, successors, check, progress)
     remote.pull(["events.jsonl"], folder)
@@ -971,11 +979,23 @@ def render_motion_queue(remote, folder, shots, successors, check, progress):
                 if current.get("prompt"):
                     item["video_prompt"] = current["prompt"]
                     item["seed"] += current["serial"] * 1000
+            inputs={name:hashlib.sha256((folder/item[name]).read_bytes()).hexdigest()
+                    for name in ('starting_image_file','ending_image_file') if item.get(name)}
+            invalidation=folder/f"motion-{item['id']}.invalidate.json"
+            journal=folder/'raghu-rental.json'
+            quantization=store.read(journal).get('quantization') if journal.is_file() else os.getenv('RAGHU_QUANTIZATION','fp8')
+            payload=dict(request=item,images=inputs,model=motion_model(),quantization=quantization,
+                         invalidation=store.read(invalidation) if invalidation.is_file() else None)
+            item['recovery_key']=hashlib.sha256(json.dumps(payload,sort_keys=True).encode()).hexdigest()
+            if not invalidation.is_file() and not corrections and motion_model()=='ltx':
+                item['legacy_recovery']=dict(prompt=item['video_prompt'],seed=item['seed'],num_frames=item['frames'],
+                    fps=item['fps'],source_sha256=inputs['starting_image_file'])
+                if item.get('ending_image_file'):
+                    item['legacy_recovery'].update(end_sha256=inputs['ending_image_file'],ending_frame=item['ending_frame'])
             (folder / f"motion-{item['id']}.review.json").unlink(missing_ok=True)
         ticket = "motion-request-" + uuid.uuid4().hex
         manifest(remote, folder, ticket + ".staged", render)
-        targets = " ".join(f"results/shot-{shot['id']}.mp4" for shot in batch)
-        remote.phase(f"rm -f -- {targets}; mv {ticket}.staged {ticket}.json", 30)
+        remote.phase(f"python motion_recovery.py {ticket}.staged && mv {ticket}.staged {ticket}.json", 60)
 
     def collect(batch, pool, on_started=None):
         reviews = []

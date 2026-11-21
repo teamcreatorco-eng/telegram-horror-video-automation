@@ -1,6 +1,7 @@
 import hashlib,json,time,traceback,fcntl,os
 import torch
 from common import ROOT,RESULTS,event
+from motion_recovery import reusable,mark_complete
 def main():
  gpu_lock=(ROOT/'gpu-model.lock').open('w')
  fcntl.flock(gpu_lock,fcntl.LOCK_EX)
@@ -24,6 +25,9 @@ def main():
  event('video_model_ready',pipeline='DistilledPipeline',resolution=[1280,768],steps=[8,3],reference_video=False,control_lora=False,quantization=quantization,prompt_enhancement=False)
  def render(plan):
   for i,s in enumerate(plan["shots"]):
+   if reusable(RESULTS,s):
+    event('video_recovered',id=s['id'])
+    continue
    source=RESULTS/s['starting_image_file'];t=time.time();torch.cuda.reset_peak_memory_stats()
    if not source.is_file():
     raise ValueError("Motion requires an approved opening image.")
@@ -45,6 +49,7 @@ def main():
     target=RESULTS/f"shot-{s['id']}.mp4";temp=RESULTS/f"shot-{s['id']}.partial.mp4"
     encode_video(video=output.video,fps=s['fps'],audio=None,output_path=str(temp),video_chunks_number=get_video_chunks_number(output.num_frames,output.tiling_config))
     temp.replace(target)
+    mark_complete(RESULTS,s)
    event('video_done',id=s['id'],seconds=time.time()-t,peak_vram=torch.cuda.max_memory_allocated(),bytes=target.stat().st_size,sha256=hashlib.sha256(target.read_bytes()).hexdigest())
  if os.getenv("RAGHU_WATCH") != "1":
   render(json.loads((ROOT/'render-plan.json').read_text()))

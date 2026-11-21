@@ -59,7 +59,11 @@ def api(path, payload=None, timeout=20):
 
 
 def render(plan):
+    from motion_recovery import reusable, mark_complete
     for shot in plan["shots"]:
+        if reusable(RESULTS,shot):
+            event('video_recovered',id=shot['id'])
+            continue
         ident = shot["id"]
         source = RESULTS / shot["starting_image_file"]
         if not re.fullmatch(r"\d{3}", ident) or not source.is_file() or source.parent != RESULTS:
@@ -83,6 +87,7 @@ def render(plan):
             output, = (COMFY / "output").glob(prefix + "*.mp4")
             target = RESULTS / f"shot-{ident}.mp4"
             output.replace(target)
+            mark_complete(RESULTS,shot)
             event("video_done", id=ident, seconds=time.monotonic() - start, bytes=target.stat().st_size,
                   sha256=hashlib.sha256(target.read_bytes()).hexdigest())
         finally:

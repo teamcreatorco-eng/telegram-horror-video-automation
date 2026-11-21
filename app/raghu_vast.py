@@ -701,7 +701,14 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
             remote.quantization = previous["quantization"]
             remote.restart_preserved(previous)
             try:
-                remote.push([ASSETS / "stills.py"])
+                remote.push([ASSETS/name for name in ('stills.py','videos.py','wan_worker.py','motion_recovery.py')])
+                token=os.getenv('HF_TOKEN','').strip()
+                if token:
+                    hf=temp/'.env'
+                    hf.write_text('HF_TOKEN='+token+'\n',encoding='ascii')
+                    hf.chmod(0o600)
+                    remote.push([hf])
+                    remote.phase('chmod 600 .env',20)
                 yield remote
             finally:
                 finish_rental(journal, recovery.is_file())
@@ -891,7 +898,7 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
             runtime.write_text(f"export LTX_QUANTIZATION={quantization}\nexport RAGHU_MOTION_MODEL={model}\n"
                                f"export RAGHU_IMAGE_MODEL={still_model}\n",
                                encoding="ascii", newline="\n")
-            remote.push([worker, model_file, runtime, *[ASSETS / name for name in ("common.py", "stills.py", "videos.py",
+            remote.push([worker, model_file, runtime, *[ASSETS / name for name in ("common.py", "stills.py", "videos.py", "motion_recovery.py",
                 "download_video_only.py", "wan_worker.py", "wan_setup.py",
                 "qwen_stills.py", "qwen-model-manifest.json", "hunyuan_worker.py", "hunyuan-model-manifest.json",
                 "style-wide.jpg", "style-interior.jpg")]])
