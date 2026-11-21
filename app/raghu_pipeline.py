@@ -38,6 +38,8 @@ AI_VISUAL_REVIEW = False
 def check_image_file(path):
     with Image.open(path) as image:
         image.verify()
+    with Image.open(path) as image:
+        image.load()
     return {"pass": True, "review_skipped": True, "technical_checks_passed": True,
             "approval_basis": "readable_image", "reason": "Image saved successfully. AI visual review is disabled."}
 
@@ -1004,6 +1006,7 @@ def render_motion_queue(remote, folder, shots, successors, check, progress):
     """Keep one batch ready while reviewing the batch being collected."""
     round_id = retry_round(folder)
     by_id = {shot["id"]: shot for shot in shots}
+    tickets={}
 
     def checkpoint(ident):
         return folder / f"motion-{ident}.retakes.json"
@@ -1044,9 +1047,14 @@ def render_motion_queue(remote, folder, shots, successors, check, progress):
         ticket = "motion-request-" + uuid.uuid4().hex
         manifest(remote, folder, ticket + ".staged", render)
         remote.phase(f"python motion_recovery.py {ticket}.staged && mv {ticket}.staged {ticket}.json", 60)
+        for shot in batch:tickets[shot['id']]=ticket
 
     def collect(batch, pool, on_started=None):
         reviews = []
+        ticket=tickets[batch[0]['id']]
+        remote.phase(f"while [ ! -s results/{ticket}.accepted ]; do "
+                     "ps -p $(cat motion.pid) -o stat= | grep -q '^[^Z]' || exit 1; sleep 2; done",1800)
+        if on_started is not None:on_started()
         for index, shot in enumerate(batch):
             check()
             clip = f"shot-{shot['id']}.mp4"
@@ -1055,9 +1063,6 @@ def render_motion_queue(remote, folder, shots, successors, check, progress):
                          "sleep 2; done", 1800 if motion_model() == "hunyuan15" else 900 if motion_model() == "wan22" else 600)
             remote.pull([clip], folder)
             reviews.append(pool.submit(validate_motion, folder, shot, successors.get(shot["id"])))
-            if index == 0 and on_started is not None:
-                # The first result confirms that the single worker already opened this manifest.
-                on_started()
         started = time.monotonic()
         failed = {shot["id"]: result["reason"] for shot, future in zip(batch, reviews)
                   if not (result := future.result())["pass"]}

@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from app import local_launcher as launcher
 
@@ -47,3 +48,24 @@ def test_foreign_service_on_port_is_not_treated_as_our_bot(tmp_path,monkeypatch)
     config=launcher.settings(tmp_path,{})
     monkeypatch.setattr(launcher,'health',lambda url:dict(ok=True,local_instance='different'))
     with pytest.raises(RuntimeError,match='another application'):launcher.start(config)
+
+
+def test_process_check_is_read_only_and_does_not_use_kill(monkeypatch):
+    def unsafe(*a):raise AssertionError('Process checks must never send a signal')
+    monkeypatch.setattr(launcher.os,'kill',unsafe)
+    assert launcher.process_alive(os.getpid())
+
+
+def test_recycled_pid_is_not_mistaken_for_previous_controller(tmp_path,monkeypatch):
+    config=launcher.settings(tmp_path,{})
+    folder=config['data']/'local-host';folder.mkdir(parents=True)
+    (folder/'process.json').write_text(json.dumps(dict(pid=123,identity=config['identity'],fingerprint='old-process')))
+    monkeypatch.setattr(launcher,'process_fingerprint',lambda pid:'new-process')
+    states=iter([None,dict(ok=True,local_instance=config['identity'])])
+    monkeypatch.setattr(launcher,'health',lambda _:next(states))
+    class Child:
+        pid=456
+        def poll(self):return None
+    monkeypatch.setattr(launcher.subprocess,'Popen',lambda *a,**k:Child())
+    monkeypatch.setattr(launcher.webbrowser,'open',lambda _:None)
+    assert launcher.start(config)==config['url']+'/healthz'

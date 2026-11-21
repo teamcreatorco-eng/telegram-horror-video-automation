@@ -51,6 +51,22 @@ def test_noncompilable_scene_is_a_format_error_inside_response_retry(record):
         adapter.planning_writer.check_scene_envelopes({'scenes': [scene]}, 1)
 
 
+@pytest.mark.parametrize('defect',['missing_speaker','duplicate_cast','bad_effect'])
+def test_renderer_contract_is_corrected_inside_scene_response_retry(defect):
+    from tests.test_scene_records import record
+    r=record()
+    r['location']='#BGD-01-ROOM'
+    assets=dict(characters=[dict(tag='@CHAR-01-MEERA')],backgrounds=[dict(tag='#BGD-01-ROOM')])
+    speech=[dict(speaker='@CHAR-01-MEERA',line='वह रुका।')]
+    if defect=='duplicate_cast':
+        r['visible']=[dict(tag='@CHAR-01-MEERA',pose='standing',end_pose='still',face_visible=True)]*4
+    elif defect=='bad_effect':
+        speech[0]['speaker']='NARRATOR';r['action']['movement']=['wrong type']
+    scene=dict(scene_number=1,title='कमरा',sound_design='quiet',scene_record=r)
+    with pytest.raises(ValueError,match='scene_record|speaker'):
+        adapter.planning_writer.check_scene_envelopes({'scenes':[scene]},1,assets=assets,speech=speech)
+
+
 def test_redundant_repair_does_not_discard_a_valid_repair(monkeypatch):
     writer = adapter.planning_writer
     monkeypatch.setattr(writer, "check_assets", lambda *_: None)

@@ -22,7 +22,9 @@ def video_readable(path):
         result=subprocess.run(['ffprobe','-v','error','-show_entries','format=duration','-of','json',str(path)],
                               capture_output=True,text=True,timeout=30)
         return result.returncode==0 and float(json.loads(result.stdout)['format']['duration'])>0
-    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+    except (OSError,subprocess.TimeoutExpired) as error:
+        raise RuntimeError('Remote video validation is unavailable; completed clips are preserved. Check FFprobe and retry.') from error
+    except (ValueError, KeyError):
         return False
 
 

@@ -1,4 +1,6 @@
 import sys
+import struct
+import zlib
 from types import SimpleNamespace
 from pathlib import Path
 from PIL import Image
@@ -50,3 +52,20 @@ def test_corrupt_dialogue_audio_is_recreated_but_good_audio_is_kept(tmp_path,mon
                             dict(id='002',narration='दूसरी पंक्ति।',dialogue_voice='female')],lambda:None,lambda *a:None)
     assert calls==['पहली पंक्ति।'] and voice.readable_voice(tmp_path/'narration-001.wav')
     assert (tmp_path/'narration-002.wav').read_bytes()==good
+
+
+def test_png_with_valid_structure_but_bad_pixels_is_not_accepted(tmp_path):
+    def chunk(kind,data):
+        return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data)&0xffffffff)
+    path=tmp_path/'bad.png'
+    path.write_bytes(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',32,32,8,2,0,0,0))+
+                     chunk(b'IDAT',zlib.compress(b'x'))+chunk(b'IEND',b''))
+    with Image.open(path) as image:image.verify()
+    with pytest.raises(OSError):raghu.check_image_file(path)
+
+
+def test_truncated_wav_with_extra_metadata_is_not_accepted(tmp_path):
+    path=tmp_path/'voice.wav'
+    media.ff('-f','lavfi','-i','sine=frequency=440:sample_rate=24000','-t','1',path)
+    path.write_bytes(path.read_bytes()[:-16])
+    assert not voice.readable_voice(path)

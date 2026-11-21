@@ -204,6 +204,14 @@ def video_duration(text):
     return rounded if 30 <= rounded <= 600 and abs(seconds - rounded) < 1e-8 else None
 
 
+def scene_count(job):
+    for name in ('raghu-plan-v2.json','story.json'):
+        plan=storage.read_json(job['id'],name)
+        if isinstance(plan,dict) and isinstance(plan.get('shots'),list):
+            return len(plan['shots'])
+    return 6
+
+
 class Service:
     def __init__(self,api,bot):self.api=api;self.bot=str(bot)
     def handle(self,update):
@@ -339,7 +347,7 @@ class Service:
                     self.api.text(cid,'Not approved. Should I regenerate the video? Reply /regenerate to choose a scene, or /keep to keep this version.');return
                 if command=='/regenerate':
                     if current['state']!='rejected':self.api.text(cid,'Reject the video first with /reject, then choose what to regenerate.');return
-                    self.api.text(cid,'Choose the scene to regenerate: /scene 1 through /scene 6. Live regeneration uses paid APIs.');return
+                    self.api.text(cid,f'Choose the scene to regenerate: /scene 1 through /scene {scene_count(job)}. Live regeneration uses paid APIs.');return
                 if command=='/keep':
                     with store.db() as c:c.execute("UPDATE telegram_reviews SET state='kept' WHERE job_id=?",(job['id'],))
                     self.api.text(cid,'Kept this version. It will not be published unless you approve it later.');return
@@ -348,7 +356,8 @@ class Service:
                 return
             if command=='/scene':
                 number=text.partition(' ')[2].strip()
-                if number not in {str(n) for n in range(1,7)}:self.api.text(cid,'Use /scene followed by a number from 1 to 6. Live regeneration uses paid APIs.');return
+                maximum=scene_count(job)
+                if number not in {str(n) for n in range(1,maximum+1)}:self.api.text(cid,f'Use /scene followed by a number from 1 to {maximum}. Live regeneration uses paid APIs.');return
                 try:pipeline.regenerate(job['id'],int(number))
                 except ValueError as exc:self.api.text(cid,str(exc));return
                 with store.db() as c:c.execute("UPDATE telegram_jobs SET delivery='pending',last_text=NULL WHERE job_id=?",(job['id'],))

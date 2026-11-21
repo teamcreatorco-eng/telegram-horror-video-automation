@@ -60,6 +60,10 @@ case "$1" in
     voice-env/bin/python voice_clone.py "$2"
     ;;
   prepare-motion|motion)
+    if ! command -v ffprobe >/dev/null; then
+      apt-get update -qq
+      apt-get install -y -qq ffmpeg
+    fi
     if [ "${RAGHU_MOTION_MODEL:-ltx}" = hunyuan15 ]; then
       ensure_comfy
       if [ ! -f qwen-env/.hunyuan-ready ]; then

@@ -102,6 +102,7 @@ def main():
     while True:
         for item in sorted(ROOT.glob("motion-request-*.json")):
             if item not in seen:
+                (RESULTS / item.name.replace('.json','.accepted')).write_text('ok')
                 render(json.loads(item.read_text(encoding="utf-8")))
                 seen.add(item)
         time.sleep(1)

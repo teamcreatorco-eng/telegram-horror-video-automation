@@ -35,6 +35,17 @@ def test_corrupt_remote_clip_is_not_reused(tmp_path, monkeypatch):
     assert not worker.reusable(tmp_path,shot)
 
 
+@pytest.mark.parametrize('failure',[FileNotFoundError(),__import__('subprocess').TimeoutExpired('ffprobe',30)])
+def test_decoder_unavailability_preserves_paid_remote_clip(tmp_path,monkeypatch,failure):
+    worker=recovery();results=tmp_path/'results';results.mkdir()
+    target=results/'shot-001.mp4';target.write_bytes(b'paid clip')
+    shot=dict(id='001',recovery_key='a'*64);worker.mark_complete(results,shot)
+    request=tmp_path/'request.json';request.write_text(json.dumps({'shots':[shot]}))
+    monkeypatch.setattr(worker.subprocess,'run',lambda *a,**k:(_ for _ in ()).throw(failure))
+    with pytest.raises(RuntimeError,match='validation'):worker.prepare(tmp_path,request)
+    assert target.read_bytes()==b'paid clip' and worker.marker_file(results,shot).is_file()
+
+
 def test_old_queue_requests_are_parked_without_deleting_results(tmp_path):
     worker=recovery();(tmp_path/'results').mkdir()
     (tmp_path/'results/shot-001.mp4').write_bytes(b'completed')
@@ -74,3 +85,18 @@ def test_resume_refreshes_hf_credential(tmp_path,monkeypatch):
     uploaded=[]
     with vast._rent_once(tmp_path,'job',lambda:None,progress=lambda *a:None):pass
     assert any(name=='.env' and 'new-placeholder' in data for name,data in uploaded)
+
+
+def test_recovered_first_clip_is_not_mistaken_for_worker_acceptance(tmp_path,monkeypatch):
+    shots=[dict(id=f'{i:03}',motion='Walk toward the door.') for i in range(1,7)]
+    for shot in shots:(tmp_path/f"still-{shot['id']}.png").write_bytes(b'opening')
+    calls=[]
+    class Remote:
+        def push(self,files):calls.append(('push',store.read(files[0])))
+        def phase(self,command,seconds):calls.append(('phase',command))
+        def pull(self,names,folder):
+            calls.append(('pull',names));(folder/names[0]).write_bytes(b'validated mock clip')
+    monkeypatch.setattr(pipeline,'validate_motion',lambda *a:{'pass':True})
+    assert pipeline.render_motion_queue(Remote(),tmp_path,shots,{},lambda:None,lambda *a:None)==[]
+    first_pull=next(i for i,row in enumerate(calls) if row[0]=='pull')
+    assert any(kind=='phase' and '.accepted' in value for kind,value in calls[:first_pull])

@@ -149,7 +149,30 @@ def check_shots(result, speech, assets, *, editorial_checks=True):
             raise ValueError(f"Shot {number}: separate the opening from the action and ending")
 
 
-def check_scene_envelopes(result, count, *, assets=None):
+def renderer_record_shape(record):
+    """Required JSON types only; this is not a story, pose or motion reviewer."""
+    fields(record,('location','view','camera','visible','offscreen','objects','static_surfaces','action'))
+    text_fields(record,('location','view','camera'))
+    for key in ('visible','offscreen','objects','static_surfaces'):
+        if not isinstance(record[key],list):raise ValueError('scene_record lists required')
+    for person in record['visible']:
+        fields(person,('tag','pose','end_pose','face_visible'))
+        text_fields(person,('tag','pose','end_pose'))
+        if type(person['face_visible']) is not bool:raise ValueError('scene_record face_visible must be boolean')
+    for item in record['objects']:
+        fields(item,('id','description','before','after','fixed'))
+        text_fields(item,('id','description','before','after'))
+        if type(item['fixed']) is not bool:raise ValueError('scene_record fixed must be boolean')
+    if any(not isinstance(x,str) for key in ('offscreen','static_surfaces') for x in record[key]):
+        raise ValueError('scene_record reference text required')
+    action=record['action']
+    fields(action,('kind','actor','target','movement','reveal_face'))
+    text_fields(action,('kind','movement'))
+    if type(action['reveal_face']) is not bool or any(action[k] is not None and not isinstance(action[k],str) for k in ('actor','target')):
+        raise ValueError('scene_record action has invalid JSON types')
+
+
+def check_scene_envelopes(result, count, *, assets=None, speech=None):
     """Check compilable JSON, without semantic scene review or repair."""
     fields(result, ("scenes",))
     if not isinstance(result["scenes"], list) or len(result["scenes"]) != count:
@@ -162,6 +185,7 @@ def check_scene_envelopes(result, count, *, assets=None):
         try:
             # Executable JSON shape only. No face/action/continuity quality rejection.
             record = scene['scene_record']
+            renderer_record_shape(record)
             compiled = compile_record(record)
             if not isinstance(record['action']['kind'], str) or not all(
                 isinstance(compiled[key], str) and compiled[key].strip()
@@ -175,6 +199,11 @@ def check_scene_envelopes(result, count, *, assets=None):
             locations = {b['tag'] for b in assets['backgrounds']}
             if compiled['background_tag'] not in locations or any(t not in cast for t in compiled['character_tags']):
                 raise ValueError(f'Scene {number}: use declared character and background IDs in scene_record')
+        tags=compiled['character_tags']
+        if len(tags)>3 or len(tags)!=len(set(tags)):
+            raise ValueError(f'Scene {number}: scene_record must use unique visible character IDs')
+        if speech and speech[number-1]['speaker']!=NARRATOR and speech[number-1]['speaker'] not in tags:
+            raise ValueError(f'Scene {number}: locked dialogue speaker must be visible in scene_record')
 
 
 def check_review(review, draft, speech):
@@ -322,7 +351,7 @@ def plan_title(title: str, duration_seconds: int, *, project_id: str, model: Wri
         "Preserve all current scene-specific states explicitly across angle changes. The JSON contract supersedes the template's output layout."
     )
     scenes_prompt += "\n" + SCENE_RECORD_SCHEMA
-    shots = ask(model, scenes_prompt, lambda x: check_scene_envelopes(x, count, assets=assets), max(4000, count * 500))
+    shots = ask(model, scenes_prompt, lambda x: check_scene_envelopes(x, count, assets=assets, speech=speech), max(4000, count * 500))
     # Compile prompt data directly. No semantic rejection or per-record AI repair gate.
     record_history = []
     original_shots = deepcopy(shots["scenes"])

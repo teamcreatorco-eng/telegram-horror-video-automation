@@ -37,9 +37,34 @@ def health(url):
 
 
 def process_alive(pid):
-    if type(pid) is not int or pid<=0:return False
-    try:os.kill(pid,0);return True
-    except OSError:return False
+    return process_fingerprint(pid) is not None
+
+
+def process_fingerprint(pid):
+    """Read process creation identity; os.kill(pid, 0) is destructive on Windows."""
+    if type(pid) is not int or pid<=0:return None
+    if os.name=='nt':
+        import ctypes
+        from ctypes import wintypes
+        kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+        kernel.OpenProcess.argtypes=[wintypes.DWORD,wintypes.BOOL,wintypes.DWORD]
+        kernel.OpenProcess.restype=wintypes.HANDLE
+        kernel.CloseHandle.argtypes=[wintypes.HANDLE]
+        kernel.GetExitCodeProcess.argtypes=[wintypes.HANDLE,ctypes.POINTER(wintypes.DWORD)]
+        kernel.GetProcessTimes.argtypes=[wintypes.HANDLE,*([ctypes.POINTER(wintypes.FILETIME)]*4)]
+        handle=kernel.OpenProcess(0x1000,False,pid) # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:return None
+        try:
+            code=wintypes.DWORD()
+            if not kernel.GetExitCodeProcess(handle,ctypes.byref(code)) or code.value!=259:return None
+            creation,exited,kernel_time,user_time=[wintypes.FILETIME() for _ in range(4)]
+            if not kernel.GetProcessTimes(handle,*map(ctypes.byref,(creation,exited,kernel_time,user_time))):return None
+            return f'{pid}:{creation.dwHighDateTime}:{creation.dwLowDateTime}'
+        finally:kernel.CloseHandle(handle)
+    try:
+        stat=Path(f'/proc/{pid}/stat').read_text().rsplit(')',1)[1].split()
+        return f'{pid}:{stat[19]}' # start time, field 22
+    except (OSError,IndexError):return None
 
 
 @contextmanager
@@ -75,7 +100,9 @@ def start(config):
             path=folder/'process.json'
             try:previous=json.loads(path.read_text(encoding='utf-8'))
             except (OSError,ValueError):previous={}
-            if process_alive(previous.get('pid')):
+            current=process_fingerprint(previous.get('pid'))
+            if (previous.get('identity')==config['identity'] and previous.get('fingerprint')
+                    and previous['fingerprint']==current):
                 raise RuntimeError('The local controller is running but is not ready. Check data/local-host/server.log; a second bot was not started.')
             with (folder/'server.log').open('ab') as log:
                 options=dict(cwd=str(config['root']),env=config['env'],stdin=subprocess.DEVNULL,
@@ -84,7 +111,8 @@ def start(config):
                 else:options['start_new_session']=True
                 child=subprocess.Popen([sys.executable,'run.py'],**options)
             partial=path.with_suffix('.tmp')
-            partial.write_text(json.dumps(dict(pid=child.pid,identity=config['identity'])),encoding='utf-8')
+            partial.write_text(json.dumps(dict(pid=child.pid,identity=config['identity'],
+                                              fingerprint=process_fingerprint(child.pid))),encoding='utf-8')
             partial.replace(path)
             deadline=time.monotonic()+45
             while time.monotonic()<deadline:

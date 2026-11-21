@@ -51,8 +51,11 @@ def narration_lines(shots):
 def readable_voice(path):
     try:
         with wave.open(str(path), "rb") as stream:
-            size = stream.getnframes() * stream.getnchannels() * stream.getsampwidth()
-            return size > 0 and path.stat().st_size >= size + 44 and bool(stream.readframes(1))
+            expected=stream.getnframes()*stream.getnchannels()*stream.getsampwidth()
+            if expected<=0:return False
+            read=0
+            while chunk:=stream.readframes(65536):read+=len(chunk)
+            return read==expected
     except (OSError, EOFError, wave.Error):
         return False
 

@@ -701,7 +701,9 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
             remote.quantization = previous["quantization"]
             remote.restart_preserved(previous)
             try:
-                remote.push([ASSETS/name for name in ('stills.py','videos.py','wan_worker.py','motion_recovery.py')])
+                worker=temp/'worker.sh'
+                worker.write_text((ASSETS/'worker.sh').read_text(encoding='utf-8-sig'),encoding='utf-8',newline='\n')
+                remote.push([worker,*[ASSETS/name for name in ('stills.py','videos.py','wan_worker.py','motion_recovery.py')]])
                 token=os.getenv('HF_TOKEN','').strip()
                 if token:
                     hf=temp/'.env'

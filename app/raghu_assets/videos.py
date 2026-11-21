@@ -61,6 +61,7 @@ def main():
     continue
    seen.add(request.name)
    plan = json.loads(request.read_text())
+   (RESULTS / request.name.replace('.json','.accepted')).write_text('ok')
    render(plan)
    (RESULTS / request.name.replace('.json','.done')).write_text('ok')
   time.sleep(.5)

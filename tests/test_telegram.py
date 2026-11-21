@@ -78,6 +78,16 @@ def test_script_choice_uses_shared_options_and_durable_selection(service, monkey
     store.save(store.folder(ident)/'script-options.json',packet)
     assert script_options.choose(store.folder(ident),lambda *a:pytest.fail('Rewrote saved script'))==packet['options'][1]
 
+
+def test_ten_minute_scene_command_can_regenerate_last_scene(service,monkeypatch):
+    service.handle(update());ident=tg.latest(service.bot,101)['id']
+    store.update(ident,status='complete')
+    store.save(store.folder(ident)/'raghu-plan-v2.json',{'shots':[dict(id=f'{i:03}') for i in range(1,121)]})
+    calls=[];monkeypatch.setattr(pipeline,'regenerate',lambda job,number:calls.append((job,number)))
+    service.handle(update('/scene 120',ident=2))
+    assert calls==[(ident,120)]
+
+
 def test_raghu_recovery_buttons_retry_only_the_chat_owned_job(service, monkeypatch):
     service.handle(update())
     ident = tg.latest(service.bot, 101)["id"]
