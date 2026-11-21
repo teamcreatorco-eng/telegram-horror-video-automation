@@ -433,12 +433,12 @@ class Service:
         except ValueError as exc:self.api.text(cid,str(exc));return
         with store.db() as c:c.execute('INSERT INTO telegram_jobs(job_id,bot,chat_id,user_id) VALUES (?,?,?,?) ON CONFLICT(job_id) DO NOTHING',(ident,self.bot,str(cid),str(uid)))
         store.folder(ident).mkdir(parents=True,exist_ok=True)
+        if not database.postgres() and store.get(ident)['status']=='queued':pipeline.enqueue(ident)
         if duration is not None:
             with store.db() as c:
                 c.execute("DELETE FROM telegram_duration_requests WHERE bot=? AND chat_id=? AND user_id=?", draft_key)
             self.api.call('sendMessage', {'chat_id':cid, 'text':f"Queued a {duration}-second video. I’ll update you here.",
                                           'reply_markup': {'remove_keyboard': True}})
-        if not database.postgres() and store.get(ident)['status']=='queued':pipeline.enqueue(ident)
 
     def recover(self, update):
         query = update["callback_query"]
@@ -456,7 +456,7 @@ class Service:
                                   (self.bot, cid, uid, ident)).fetchone()
             job = store.get(ident) if owned else None
             valid = bool(job and job['status'] == 'awaiting_script')
-            self.api.call("answerCallbackQuery", {"callback_query_id": query['id'],
+            self.answer_callback({"callback_query_id": query['id'],
                           "text": "Script selected." if valid else "This choice is no longer available."})
             if valid:
                 script_options.select(store.folder(ident), int(number))
@@ -474,11 +474,18 @@ class Service:
                             (self.bot, cid, uid, ident)).fetchone()
         job = store.get(ident) if row else None
         active = bool(job and recovery_job(job))
-        self.api.call("answerCallbackQuery", {"callback_query_id": query["id"],
+        self.answer_callback({"callback_query_id": query["id"],
                       "text": "Working on it." if active else "This recovery option has expired."})
         if active:
             text = f"/resume {ident}" if kind == "retry" else "/generate"
             self.handle({"update_id": update["update_id"], "message": {"chat": chat, "from": user, "text": text}})
+
+    def answer_callback(self, fields):
+        try:
+            self.api.call('answerCallbackQuery',fields)
+        except BotError as exc:
+            if exc.code not in (400,403,404):raise
+            logging.info('Callback acknowledgement expired (code %s); checking saved action',exc.code)
 
     def ask_duration(self, cid):
         self.api.call('sendMessage', {'chat_id': cid, 'text': DURATION_PROMPT, 'reply_markup': {
@@ -497,7 +504,7 @@ class Service:
 
     def send_script_choices(self, cid, job):
         from . import script_options
-        packet = store.read(store.folder(job['id']) / "script-options.json")
+        packet = script_options.read_options(store.folder(job['id']))
         for number, value in enumerate(packet["options"], 1):
             text = f"Script option {number}\n\n" + script_options.script_text(value)
             # Telegram limits message length; never truncate a long script.
@@ -770,7 +777,8 @@ def run(stop):
                 for update in updates:
                     try:service.handle(update)
                     except BotError as exc:
-                        if exc.code!=403:raise
+                        if exc.code not in (400,403,404):raise
+                        logging.warning('Skipped permanently rejected Telegram update %s (code %s)',update['update_id'],exc.code)
                     with store.db() as c:c.execute('UPDATE telegram_cursor SET next_update=? WHERE bot=?',(update['update_id']+1,bot))
                 service.notify()
             except BotError as exc:

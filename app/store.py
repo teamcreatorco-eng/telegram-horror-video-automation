@@ -12,7 +12,7 @@ def init():
         else: c.execute('PRAGMA journal_mode=WAL')
         c.execute('CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, request TEXT, status TEXT, stage TEXT, progress INTEGER, error TEXT, created TEXT, cancel INTEGER DEFAULT 0)')
         columns=[r[0] for r in c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='jobs' AND table_schema=current_schema()")] if database.postgres() else [r[1] for r in c.execute('PRAGMA table_info(jobs)')]
-        for name,definition in [('owner',"TEXT NOT NULL DEFAULT 'admin'"),('heartbeat','DOUBLE PRECISION'),('worker','TEXT'),('regenerate_scene','INTEGER'),('enqueued','DOUBLE PRECISION'),('retry_at','DOUBLE PRECISION'),('retry_count','INTEGER NOT NULL DEFAULT 0'),('planning_resumes','INTEGER NOT NULL DEFAULT 0')]:
+        for name,definition in [('owner',"TEXT NOT NULL DEFAULT 'admin'"),('heartbeat','DOUBLE PRECISION'),('worker','TEXT'),('regenerate_scene','INTEGER'),('enqueued','DOUBLE PRECISION'),('retry_at','DOUBLE PRECISION'),('retry_count','INTEGER NOT NULL DEFAULT 0'),('planning_resumes','INTEGER NOT NULL DEFAULT 0'),('script_choice','INTEGER')]:
             if name not in columns:c.execute('ALTER TABLE jobs ADD COLUMN '+name+' '+definition)
         c.execute('CREATE INDEX IF NOT EXISTS jobs_owner_created ON jobs(owner,created)')
         c.execute('CREATE INDEX IF NOT EXISTS jobs_queue ON jobs(status,enqueued)')
@@ -50,6 +50,13 @@ def get(ident):
     with db() as c: row=c.execute('SELECT * FROM jobs WHERE id=?',(ident,)).fetchone()
     if not row: return None
     item=dict(row); item['request']=json.loads(item['request']); return item
+
+def select_script(ident, number):
+    if number not in (1, 2): raise ValueError('Choose script 1 or 2')
+    with db() as c:
+        changed=c.execute('UPDATE jobs SET script_choice=? WHERE id=? AND (script_choice IS NULL OR script_choice=?)',
+                          (number,ident,number)).rowcount
+        if not changed: raise ValueError('A different script has already been selected')
 
 def all_jobs(owner=None):
     with db() as c:

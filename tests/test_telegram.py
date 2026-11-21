@@ -31,6 +31,53 @@ def service(tmp_path,monkeypatch):
 def update(text='Haunted road',uid=101,ident=1,kind='private'):
     return {'update_id':ident,'message':{'message_id':ident,'text':text,'chat':{'id':uid,'type':kind},'from':{'id':uid}}}
 
+
+def test_expired_callback_acknowledgement_does_not_block_retry(service, monkeypatch):
+    service.handle(update())
+    ident=tg.latest(service.bot,101)['id'];store.update(ident,status='failed',error='saved error')
+    monkeypatch.setenv('MEDIA_BACKEND','raghu')
+    queued=[];monkeypatch.setattr(pipeline,'enqueue',lambda ident:queued.append(ident) or True)
+    original=service.api.call
+    def call(method,*a,**kw):
+        if method=='answerCallbackQuery':raise tg.BotError(400)
+        return original(method,*a,**kw)
+    monkeypatch.setattr(service.api,'call',call)
+    service.handle({'update_id':2,'callback_query':{'id':'expired','data':f'retry:{ident}',
+        'from':{'id':101},'message':{'chat':{'id':101,'type':'private'}}}})
+    assert queued==[ident]
+
+
+def test_duration_ack_failure_happens_after_local_enqueue(service, monkeypatch):
+    from app import raghu_pipeline
+    monkeypatch.setenv('MEDIA_BACKEND','raghu');monkeypatch.setenv('RAGHU_PLAN_ONLY','false')
+    monkeypatch.setenv('TELEGRAM_PRODUCTION_MODE','live');monkeypatch.setenv('ALLOW_PAID_GENERATION','true')
+    monkeypatch.setattr(raghu_pipeline,'production_credentials',lambda:None)
+    queued=[];monkeypatch.setattr(pipeline,'enqueue',lambda ident:queued.append(ident) or True)
+    service.handle(update('/generate'))
+    original=service.api.call
+    def call(method,fields=None,**kwargs):
+        if method=='sendMessage' and fields['text'].startswith('Queued a'):raise tg.BotError(502)
+        return original(method,fields,**kwargs)
+    monkeypatch.setattr(service.api,'call',call)
+    with pytest.raises(tg.BotError):service.handle(update('30 seconds',ident=2))
+    assert len(queued)==1
+
+
+def test_script_choice_uses_shared_options_and_durable_selection(service, monkeypatch):
+    from app import script_options
+    service.handle(update());ident=tg.latest(service.bot,101)['id']
+    store.update(ident,status='awaiting_script')
+    packet={'options':[{'speech':[{'line':'First'}]},{'speech':[{'line':'Second'}]}]}
+    monkeypatch.setattr(storage,'enabled',lambda:True)
+    monkeypatch.setattr(storage,'read_json',lambda job,name:packet)
+    monkeypatch.setattr(storage,'publish_path',lambda _:None)
+    service.send_script_choices(101,store.get(ident))
+    script_options.select(store.folder(ident),2)
+    assert store.get(ident)['script_choice']==2
+    # A worker's old local copy must not erase the user's shared choice.
+    store.save(store.folder(ident)/'script-options.json',packet)
+    assert script_options.choose(store.folder(ident),lambda *a:pytest.fail('Rewrote saved script'))==packet['options'][1]
+
 def test_raghu_recovery_buttons_retry_only_the_chat_owned_job(service, monkeypatch):
     service.handle(update())
     ident = tg.latest(service.bot, 101)["id"]
@@ -357,4 +404,4 @@ def test_script_choices_owned_selection_and_full_delivery(service, monkeypatch):
     assert not queued
     pick(101, 3)
     assert queued == [ident]
-    assert store.read(store.folder(ident) / "script-options.json")["selected"] == 2
+    assert store.get(ident)['script_choice'] == 2
