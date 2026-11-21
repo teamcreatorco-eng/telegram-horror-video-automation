@@ -13,7 +13,7 @@ from typing import Protocol
 
 from .visual_composition import SHOT_RULES
 from .scene_records import VERSION as SCENE_RECORD_VERSION, SCHEMA as SCENE_RECORD_SCHEMA
-from .scene_records import validate_record, compile_record, repair_records
+from .scene_records import compile_record
 from .anthropic_client import ScriptClient
 from .models import new_project, save
 from .one_minute import BG_TAG, CHAR_TAG, json_object, validate
@@ -149,8 +149,8 @@ def check_shots(result, speech, assets, *, editorial_checks=True):
             raise ValueError(f"Shot {number}: separate the opening from the action and ending")
 
 
-def check_scene_envelopes(result, count):
-    """Check only the response envelope; repair individual records separately."""
+def check_scene_envelopes(result, count, *, assets=None):
+    """Check compilable JSON, without semantic scene review or repair."""
     fields(result, ("scenes",))
     if not isinstance(result["scenes"], list) or len(result["scenes"]) != count:
         raise ValueError(f"Expected exactly {count} scene records")
@@ -159,6 +159,22 @@ def check_scene_envelopes(result, count):
         text_fields(scene, ("title", "sound_design"))
         if type(scene["scene_number"]) is not int or scene["scene_number"] != number:
             raise ValueError("Scenes must be numbered in locked speech order")
+        try:
+            # Executable JSON shape only. No face/action/continuity quality rejection.
+            record = scene['scene_record']
+            compiled = compile_record(record)
+            if not isinstance(record['action']['kind'], str) or not all(
+                isinstance(compiled[key], str) and compiled[key].strip()
+                for key in ('background_tag', 'first_frame_description', 'camera', 'visual_action', 'ending_state')
+            ):
+                raise TypeError('Expected prompt text')
+        except (KeyError, TypeError, ValueError, AttributeError) as error:
+            raise ValueError(f'Scene {number}: scene_record is missing required compilable data ({type(error).__name__})') from None
+        if assets is not None:
+            cast = {c['tag'] for c in assets['characters']}
+            locations = {b['tag'] for b in assets['backgrounds']}
+            if compiled['background_tag'] not in locations or any(t not in cast for t in compiled['character_tags']):
+                raise ValueError(f'Scene {number}: use declared character and background IDs in scene_record')
 
 
 def check_review(review, draft, speech):
@@ -306,46 +322,15 @@ def plan_title(title: str, duration_seconds: int, *, project_id: str, model: Wri
         "Preserve all current scene-specific states explicitly across angle changes. The JSON contract supersedes the template's output layout."
     )
     scenes_prompt += "\n" + SCENE_RECORD_SCHEMA
-    shots = ask(model, scenes_prompt, lambda x: check_scene_envelopes(x, count), max(4000, count * 500))
-    # Structural compilation runs before any rental. It is not an image reviewer.
+    shots = ask(model, scenes_prompt, lambda x: check_scene_envelopes(x, count, assets=assets), max(4000, count * 500))
+    # Compile prompt data directly. No semantic rejection or per-record AI repair gate.
     record_history = []
-    known_cast = {c["tag"] for c in assets["characters"]}
-    locations = {b["tag"] for b in assets["backgrounds"]}
     original_shots = deepcopy(shots["scenes"])
-    for index, (shot, beat) in enumerate(zip(shots["scenes"], speech, strict=True)):
-        def check_record(record):
-            validate_record(record, known_cast, locations)
-            if beat["speaker"] != NARRATOR and beat["speaker"] not in [p["tag"] for p in record["visible"]]:
-                raise ValueError("The dialogue speaker must be visible")
-
-        def correct_record(_index, record, reason, simplify):
-            previous = shots["scenes"][index - 1].get("scene_record") if index else None
-            following = original_shots[index + 1] if index + 1 < len(original_shots) else None
-            prompt = (
-                "Correct ONLY this scene record. Preserve its exact narrated event and approved identities. "
-                "Do not rewrite speech or other scenes. Keep adjacent location and object states consistent. "
-                + ("Use the simplest framing for the SAME event, one action, fixed camera. " if simplify else "")
-                + SCENE_RECORD_SCHEMA
-                + f"\nLocked speech: {as_json(beat)}\nAssets: {as_json(assets)}"
-                + f"\nOriginal shot: {as_json(original_shots[index])}\nRecord: {as_json(record)}"
-                + f"\nPrevious corrected record: {as_json(previous)}\nNext shot: {as_json(following)}"
-                + f"\nStructural error: {reason}\nReturn ONLY {{\"scene_record\":{{...}}}}."
-            )
-            # Each correction gets one response; the outer bounded loop owns retries.
-            response = model.complete(prompt, max_tokens=1800, temperature=0)
-            try:
-                return json_object(response).get("scene_record")
-            except ValueError:
-                return None
-
-        records, repairs = repair_records([shot.get("scene_record")], check_record, correct_record)
-        shot["scene_record"] = records[0]
-        shot.update(compile_record(records[0]))
-        shot["effects"] = (records[0]["action"]["movement"]
-                           if records[0]["action"]["kind"] == "environmental_effect" else "Preserve the opening lighting and style")
-        for repair in repairs:
-            repair["scene_number"] = index + 1
-        record_history.extend(repairs)
+    for shot in shots["scenes"]:
+        record = shot["scene_record"]
+        shot.update(compile_record(record))
+        shot["effects"] = (record["action"]["movement"]
+                           if record["action"]["kind"] == "environmental_effect" else "Preserve the opening lighting and style")
     draft = {**assets, **shots}
     review_history = []
     # No AI continuity editor or visual rejection gate.
@@ -398,7 +383,7 @@ def write_plan(title, duration_seconds, output: Path, *, model: WritingModel | N
 
 
 def save_plan(project, output: Path):
-    """Publish a fully reviewed plan and its handoff together."""
+    """Publish the compiled plan and its handoff together, without AI review."""
     output.parent.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(prefix=".planning-", dir=output.parent) as temp:
         ready = Path(temp) / "ready"

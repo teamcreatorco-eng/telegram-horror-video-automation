@@ -10,6 +10,25 @@ Send a title or tap **Generate** in Telegram. Choose 2, 5, or 10 minutes, or ent
 
 Both hosts run the same production code and use a rented Vast GPU. Use `/setup` before your first run and `/status` to recover a paused job.
 
+### Natural narrator timing
+
+Chatterbox runs one resumable narration job for the complete selected story. Long stories
+are synthesized in sentence groups because the pinned model cannot generate ten minutes
+in one inference. Groups span scenes, use the same narrator conditioning, and preserve
+their natural breaths and pauses. Dialogue remains a separate voice turn.
+
+The voice worker automatically installs `faster-whisper==1.2.1` and downloads its multilingual
+`base` model (approximately 150 MB) on the rented host CPU to find spoken word boundaries.
+No additional API key is required. This adds setup and transcription time; the previous
+narration cost projection does not include this new work.
+
+Editing never speeds up or slows down speech. Picture is cut to spoken timing; if a line
+outlasts its footage, the final picture frame is held so no spoken words are lost. The
+requested duration guides the script; the final narrated film can differ from that duration.
+Saved paragraph audio, a continuous narrator master, and word timestamps support retries.
+There is no AI visual reviewer or scene-semantic rejection loop. Basic JSON, asset identity,
+credential, audio-timing and file-readability errors are still reported accurately.
+
 [Setup and recovery reference](docs/raghu-railway.md)
 
 

@@ -44,6 +44,13 @@ def test_asset_stage_uses_only_the_locked_cast():
     assert adapter.bind_locked_cast(missing, locked) == missing
 
 
+@pytest.mark.parametrize('record', [None, {}, {'visible': None}])
+def test_noncompilable_scene_is_a_format_error_inside_response_retry(record):
+    scene = dict(scene_number=1, title='कमरा', sound_design='Quiet', scene_record=record)
+    with pytest.raises(ValueError, match='scene_record'):
+        adapter.planning_writer.check_scene_envelopes({'scenes': [scene]}, 1)
+
+
 def test_redundant_repair_does_not_discard_a_valid_repair(monkeypatch):
     writer = adapter.planning_writer
     monkeypatch.setattr(writer, "check_assets", lambda *_: None)
@@ -97,7 +104,8 @@ def test_two_minute_story_allows_a_small_overage_when_each_beat_fits(lengths, ex
         writer.check_story(story, count, low, high, editorial_margin=True)
 
 
-def test_production_planner_accepts_83_words_without_any_review_call(tmp_path):
+@pytest.mark.parametrize('semantic_flag', [False, True])
+def test_production_planner_accepts_83_words_without_any_review_call(tmp_path, semantic_flag):
     writer = adapter.planning_writer
     story = {"entity": "परछाईं", "characters": [{"tag": "@CHAR-01-BABLI", "name": "बबली"}],
              "speech": [{"speaker": "NARRATOR", "line": " ".join(["छाया"] * n)}
@@ -112,6 +120,10 @@ def test_production_planner_accepts_83_words_without_any_review_call(tmp_path):
                              "action": {"kind": "establishing", "actor": None, "target": None,
                                         "movement": "holds the composition", "reveal_face": False}}}
                         for i in range(1, 7)]}
+    if semantic_flag:
+        # A semantic concern must not launch record reviews/repairs or reject production.
+        shots['scenes'][0]['scene_record']['visible'][0]['face_visible'] = False
+        shots['scenes'][0]['scene_record']['action']['reveal_face'] = True
     class Model:
         def __init__(self):
             self.calls = []

@@ -13,6 +13,7 @@ from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 from huggingface_hub import snapshot_download
 
 from common import ROOT, event
+from narration_layout import VERSION, paragraph_groups, aligned_spans
 
 
 def main():
@@ -20,9 +21,8 @@ def main():
     reference = ROOT / manifest["reference"]
     output = ROOT / "results" / manifest["output"]
     output.mkdir(exist_ok=True)
-    missing = [line for line in manifest["lines"]
-               if not (output / f"narration-{line['id']}.wav").is_file()]
-    if not missing:
+    groups = paragraph_groups(manifest["lines"])
+    if not groups:
         return
 
     # Hindi never uses the Chinese segmenter in this pinned multilingual build.
@@ -37,23 +37,71 @@ def main():
     )
     event("narrator_model_ready", repo=repo, seconds=time.monotonic() - start)
     model = ChatterboxMultilingualTTS.from_local(weights, device="cuda", t3_model="v3")
-    for line in missing:
-        ident = line["id"]
-        torch.manual_seed(4291 + int(ident))
+    # Keep one voice conditioning for the whole job instead of reloading it per shot.
+    model.prepare_conditionals(str(reference), exaggeration=.46)
+    from faster_whisper import WhisperModel
+    aligner = WhisperModel("base", device="cpu", compute_type="int8", cpu_threads=4,
+                           download_root=str(ROOT / "hf-cache" / "narration-alignment"))
+    complete_audio, spans, cursor = [], [], 0
+    for index, group in enumerate(groups):
+        target = output / f"paragraph-{index:03}.wav"
         start = time.monotonic()
-        wav = model.generate(line["text"], language_id="hi", audio_prompt_path=str(reference),
-                             exaggeration=.46, cfg_weight=.45, temperature=.6).squeeze().cpu().numpy()
-        active = np.flatnonzero(np.abs(wav) > .008)
-        if not len(active):
-            raise ValueError(f"Narrator returned silence for shot {ident}.")
-        margin = int(.1 * model.sr)
-        wav = wav[max(0, active[0] - margin):min(len(wav), active[-1] + margin)]
-        target = output / f"narration-{ident}.wav"
-        partial = target.with_suffix(".partial.wav")
-        sf.write(partial, wav, model.sr)
-        partial.replace(target)
-        event("narrator_line_ready", id=ident, seconds=time.monotonic() - start,
-              duration=len(wav) / model.sr)
+        words_file = target.with_suffix(".words.json")
+        wav = None
+        if target.is_file():
+            try:
+                # libsndfile tolerates truncated data; check declared sample count too.
+                import wave
+                with wave.open(str(target), 'rb') as header:
+                    expected = header.getnframes()
+                saved, rate = sf.read(target, dtype="float32")
+                if rate == model.sr and saved.ndim == 1 and len(saved) == expected and len(saved):
+                    wav = saved
+            except (OSError, ValueError, RuntimeError, EOFError, wave.Error):
+                pass
+        if wav is None:
+            words_file.unlink(missing_ok=True)
+            torch.manual_seed(4291 + index)
+            text = " ".join(line["text"] for line in group)
+            wav = model.generate(text, language_id="hi", exaggeration=.46,
+                                 cfg_weight=.45, temperature=.6).squeeze().cpu().numpy()
+            if not len(wav) or not np.any(np.abs(wav) > .008):
+                raise ValueError("Narrator returned silence for a paragraph.")
+            # Do not strip breaths or natural edge pauses.
+            partial = target.with_suffix(".partial.wav")
+            sf.write(partial, wav, model.sr, subtype="PCM_16")
+            partial.replace(target)
+            wav, _ = sf.read(target, dtype="float32")
+            event("narrator_paragraph_ready", index=index, seconds=time.monotonic() - start,
+                  duration=len(wav) / model.sr, lines=[line["id"] for line in group])
+        duration = len(wav) / model.sr
+        def transcribe():
+            segments, _ = aligner.transcribe(str(target), language="hi", word_timestamps=True,
+                                             vad_filter=False, beam_size=5, condition_on_previous_text=False)
+            return [dict(word=w.word, start=w.start, end=w.end) for segment in segments for w in segment.words or []]
+        local = aligned_spans(words_file, group, duration, transcribe)
+        # A failed alignment leaves paragraph WAV intact for the next retry.
+        edges = [0] + [round(span["end"] * model.sr) for span in local[:-1]] + [len(wav)]
+        for i, span in enumerate(local):
+            path = output / f"narration-{span['id']}.wav"
+            part = path.with_suffix(".partial.wav")
+            sf.write(part, wav[edges[i]:edges[i + 1]], model.sr, subtype="PCM_16")
+            part.replace(path)
+            spans.append(dict(id=span["id"], start=(cursor + edges[i]) / model.sr,
+                              end=(cursor + edges[i + 1]) / model.sr))
+        complete_audio.append(wav)
+        cursor += len(wav)
+    master = output / "narration-master.wav"
+    partial = master.with_suffix(".partial.wav")
+    sf.write(partial, np.concatenate(complete_audio), model.sr, subtype="PCM_16")
+    partial.replace(master)
+    timing = output / "narration-timing.json"
+    partial = timing.with_suffix(".partial.json")
+    partial.write_text(json.dumps(dict(version=VERSION, key=manifest["key"], lines=manifest["lines"],
+                                      sample_rate=model.sr, duration=cursor/model.sr, spans=spans),
+                                  ensure_ascii=False), encoding="utf-8")
+    partial.replace(timing)
+    event("narrator_story_ready", paragraphs=len(groups), duration=cursor/model.sr)
 
 
 if __name__ == "__main__":

@@ -1146,9 +1146,8 @@ def edit(folder, shot_plan, check, *, music=True, opening=False):
     custom_seconds = shot_plan.get("requested_seconds")
     shot_count = len(shot_plan["shots"])
     cursor = 0.0
-    selection_path = folder / "saved-still-selection.json"
-    preserve_narration = selection_path.is_file() and store.read(selection_path).get("skip_motion_review")
-    approved_cadence = motion_model() == "ltx" and not uses_ending_image()
+    audio_cuts = []
+    speech_cursor = 0.0
     audio_folder = folder
     if os.getenv("RAGHU_NARRATION_PROVIDER", "gemini") == "edge":
         from .raghu_narration import narrator_folder
@@ -1169,47 +1168,40 @@ def edit(folder, shot_plan, check, *, music=True, opening=False):
                 speech = scratch / f"no-narration-{ident}.wav"
             trimmed = scratch / f"voice-{ident}.wav"
             if speech.exists():
-                media.ff("-i", speech, "-af", "silenceremove=start_periods=1:start_duration=0.03:start_threshold=-48dB,areverse,silenceremove=start_periods=1:start_duration=0.06:start_threshold=-48dB,areverse", trimmed)
+                # Preserve all breaths and pauses; normalize format, never tempo or duration.
+                media.ff("-i", speech, "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", trimmed)
                 spoken = media.duration(trimmed)
                 if spoken < .2:
                     raise RuntimeError(f"Narration for shot {ident} is empty.")
+                speech_cursor += spoken
+                # Distribute frame rounding over the timeline, rather than adding a frame per line.
+                length = (math.ceil(speech_cursor * FPS - 1e-6) - round(cursor * FPS)) / FPS
             else:
-                spoken = media.duration(clip) - .15
-                media.tone(trimmed, max(.3, spoken), "none")
-            wan = motion_model() == "wan22"
-            paired = uses_ending_image() and (folder / end_file(shot)).is_file()
-            available = media.duration(clip) if paired else min(5, media.duration(clip))
-            word_target = len(shot.get("narration", "").split()) * 60 / 160
-            # Slow unusually fast delivery slightly while keeping pitch and fitting the moving clip.
-            paced = min(max(spoken, word_target), spoken / .90) if speech.exists() else spoken
-            minimum = available if paired else (4.75 if opening else 0)
-            length = min(available, max(minimum, math.ceil((paced + .15) * FPS) / FPS))
-            speed = max(spoken / paced, spoken / max(.2, length - .08))
-            if custom_seconds:
-                total_frames = custom_seconds * FPS
-                length = ((index + 1) * total_frames // shot_count - index * total_frames // shot_count) / FPS
-                speed = max(.93, spoken / max(.2, length - .12))
-            elif approved_cadence:
-                length = available
-                speed = max(.93, spoken / max(.2, length - .20))
+                if not raghu_narration.silent():
+                    raise RuntimeError(f"Narration for shot {ident} is missing. Retry the saved narration stage.")
+                available = min(5, media.duration(clip))
+                if custom_seconds:
+                    total_frames = custom_seconds * FPS
+                    length = ((index + 1) * total_frames // shot_count - index * total_frames // shot_count) / FPS
+                else:
+                    length = available
+                media.tone(trimmed, length, "none")
+                # All entries in the audio concat have the same PCM format.
+                normalized = scratch / f"silent-{ident}.wav"
+                media.ff("-i", trimmed, "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", normalized)
+                trimmed = normalized
             video_filter = "setsar=1,fps=24"
-            if wan or motion_model() == "hunyuan15":
+            if motion_model() in {"wan22", "hunyuan15"}:
                 video_filter = ("scale=1280:768:force_original_aspect_ratio=decrease:force_divisible_by=2,"
                                 "pad=1280:768:(ow-iw)/2:(oh-ih)/2," + video_filter)
-            if speed > (1.35 if approved_cadence else 1.18):
-                if preserve_narration:
-                    speed = 1.0
-                    length = math.ceil((spoken + .15) * FPS) / FPS
-                    hold = max(0, length - media.duration(clip) + 1 / FPS)
-                    video_filter += f",tpad=stop_mode=clone:stop_duration={hold:.6f}"
-                elif os.getenv("RAGHU_FINISH_FROM_SAVED") != folder.name:
-                    raise RuntimeError(f"Narration for shot {ident} is too long. Regenerate at a brisker pace.")
+            hold = max(0, length - media.duration(clip))
+            if hold:
+                video_filter += f",tpad=stop_mode=clone:stop_duration={hold + 1 / FPS:.6f}"
             cut = scratch / f"cut-{ident}.mp4"
-            media.ff("-i", clip, "-i", trimmed, "-map", "0:v:0", "-map", "1:a:0",
-                     "-vf", video_filter,
-                     "-af", f"atempo={speed:.5f},loudnorm=I=-16:TP=-2:LRA=9,apad",
+            media.ff("-i", clip, "-an", "-vf", video_filter,
                      "-t", f"{length:.6f}", "-c:v", "libx264", "-preset", "veryfast",
-                     "-crf", "17", "-pix_fmt", "yuv420p", "-ar", "48000", "-ac", "2", "-c:a", "aac", cut)
+                     "-crf", "17", "-pix_fmt", "yuv420p", cut)
+            audio_cuts.append(trimmed)
             cuts.append(cut)
             timeline.append({"id": ident, "start": round(cursor + opening_seconds, 4), "seconds": length,
                              "narration": shot.get("narration", ""), "score": shot.get("score", "none"),
@@ -1218,7 +1210,15 @@ def edit(folder, shot_plan, check, *, music=True, opening=False):
         concat = scratch / "cuts.ffconcat"
         concat.write_text("ffconcat version 1.0\n" + "".join(f"file {p.name}\n" for p in cuts), encoding="ascii")
         joined = scratch / "joined.mp4"
-        media.ff("-f", "concat", "-safe", "1", "-i", concat, "-c", "copy", joined)
+        picture = scratch / "picture.mp4"
+        media.ff("-f", "concat", "-safe", "1", "-i", concat, "-c", "copy", picture)
+        audio_concat = scratch / "speech.ffconcat"
+        audio_concat.write_text("ffconcat version 1.0\n" + "".join(f"file {p.name}\n" for p in audio_cuts), encoding="ascii")
+        speech_track = scratch / "speech.wav"
+        media.ff("-f", "concat", "-safe", "1", "-i", audio_concat, "-c:a", "pcm_s16le", speech_track)
+        # Encode speech once for the whole film, avoiding AAC padding between scenes.
+        media.ff("-i", picture, "-i", speech_track, "-map", "0:v:0", "-map", "1:a:0",
+                 "-c:v", "copy", "-af", "loudnorm=I=-16:TP=-2:LRA=9", "-c:a", "aac", "-b:a", "160k", joined)
         final = scratch / "final.mp4"
         if music:
             bed = scratch / "bed.wav"
