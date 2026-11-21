@@ -21,8 +21,8 @@ def test_old_rejected_image_continues_without_visual_review(monkeypatch, tmp_pat
     assert verdict["pass"] and verdict["review_skipped"] and verdict["technical_checks_passed"]
     assert pipeline.still_pair_checks(tmp_path, [{}, {}], lambda: None) == {}
     image.write_bytes(b"unreadable")
-    with pytest.raises(OSError):
-        pipeline.assess_still(tmp_path, {"file": image.name}, lambda: None)
+    result=pipeline.assess_still(tmp_path, {"file": image.name}, lambda: None)
+    assert not result['pass'] and result['technical_failure']
 
 
 @pytest.mark.parametrize("decodes", [True, False])

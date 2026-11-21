@@ -42,6 +42,51 @@ def check_image_file(path):
             "approval_basis": "readable_image", "reason": "Image saved successfully. AI visual review is disabled."}
 
 
+def invalidate_scene_media(folder, ident, archive, *, include_still=True):
+    """Archive one scene's visual outputs; canonical identity and narration remain valid."""
+    names=[f'shot-{ident}.mp4',f'motion-{ident}.review.json',f'motion-{ident}.retakes.json',
+           f'rejected-shot-{ident}.mp4',f'rejected-motion-{ident}.review.json',f'end-{ident}.png']
+    if include_still:
+        names += [f'still-{ident}.png',f'still-{ident}.png.review.json',f'still-{ident}.png.retakes.json']
+    names += ['final.mp4','production-kit.zip','raghu-timeline.json','quality-report.json','saved-still-selection.json']
+    archive.mkdir(parents=True,exist_ok=True)
+    for name in names:
+        source=folder/name
+        if source.is_file():source.replace(archive/name)
+    store.save(folder/f'motion-{ident}.invalidate.json',dict(nonce=uuid.uuid4().hex))
+    return names
+
+
+def recover_saved_images(folder, tasks, check):
+    """Quarantine technically unreadable saved images and their dependent visuals."""
+    broken=set()
+    for item in tasks:
+        check();path=folder/item['file']
+        if path.is_file():
+            try:check_image_file(path)
+            except (OSError,ValueError,SyntaxError):broken.add(item['file'])
+    if not broken:return
+    changed=True
+    while changed:
+        previous=len(broken)
+        broken.update(item['file'] for item in tasks if any(
+            ref.removeprefix('results/') in broken for ref in item.get('refs',[])))
+        changed=len(broken)!=previous
+    archive=folder/'history'/('unreadable-'+uuid.uuid4().hex);archive.mkdir(parents=True)
+    forgotten=[]
+    for name in broken:
+        if not re.fullmatch(r'[A-Za-z0-9_.-]+',name):raise ValueError('Invalid image artifact name')
+        for suffix in ('','.review.json','.retakes.json'):
+            path=folder/(name+suffix)
+            if path.is_file():path.replace(archive/path.name)
+            forgotten.append(path.name)
+        match=re.fullmatch(r'still-(\d{3})\.png',name)
+        if match:forgotten.extend(invalidate_scene_media(folder,match[1],archive,include_still=False))
+    from . import storage
+    storage.sync(folder.name)
+    storage.forget(folder.name,forgotten)
+
+
 def opening_path():
     configured = os.getenv("RAGHU_OPENING_PATH")
     if configured:
@@ -266,7 +311,9 @@ def assess_still(folder, item, check):
     report = folder / (name + ".review.json")
     if not AI_VISUAL_REVIEW:
         check()
-        result = check_image_file(folder / name)
+        try:result = check_image_file(folder / name)
+        except (OSError,ValueError,SyntaxError):
+            result={"pass":False,"technical_failure":True,"reason":"Image file is unreadable; regenerate this asset."}
         store.save(report, result)
         return result
     saved = {}
@@ -378,7 +425,7 @@ def review_stills(remote, folder, tasks, check, report_failure=lambda message: N
             fallback_seed = item["seed"] + (1000 if (folder / ("rejected-" + name)).exists() else 0)
             seed = int(result.get("candidate_seed", fallback_seed)) + 1000
             rewritten = ""
-            if item.get("visual_retake") or item.get("strict_opening"):
+            if AI_VISUAL_REVIEW and (item.get("visual_retake") or item.get("strict_opening")):
                 check()
                 try:
                     rewritten = rewrite_still_prompt(folder / name, item.get("retake_prompt", item["prompt"]),
@@ -683,6 +730,7 @@ def validate_motion(folder, shot, next_shot=None):
 
 def generate(folder, ident, shot_plan, check, progress):
     canonical, starts = still_batches(shot_plan)
+    recover_saved_images(folder,canonical+starts,check)
     looks = {character["tag"]: character["prompt"] for character in shot_plan.get("cast", [])}
     shots = []
     for original in shot_plan["shots"]:
@@ -1133,7 +1181,7 @@ def narration(folder, shots, check, progress):
     for i, shot in enumerate(shots):
         check()
         path = folder / f"narration-{shot['id']}.wav"
-        if not path.exists():
+        if not raghu_narration.readable_voice(path):
             for attempt in range(4):
                 check()
                 try:

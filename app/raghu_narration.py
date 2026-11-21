@@ -164,7 +164,7 @@ def produce(folder, shots, check, progress):
                 check()
                 ident = shot["id"]
                 output = folder / f"narration-{ident}.wav"
-                if not output.is_file():
+                if not readable_voice(output):
                     mp3 = folder / f"narration-{ident}.partial.mp3"
                     wav = folder / f"narration-{ident}.partial.wav"
                     try:

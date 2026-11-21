@@ -228,6 +228,14 @@ def archive_scene(ident,number):
                 raise ValueError('This scene has an unresolved video operation. Resume it first to avoid duplicate billing.')
         archive=root/'history'/datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')
         archive.mkdir(parents=True)
+        raghu_names=[]
+        plan_path=root/'raghu-plan-v2.json'
+        if plan_path.is_file():
+            from .raghu_pipeline import invalidate_scene_media
+            ident_scene=f'{number:03d}'
+            if not any(s['id']==ident_scene for s in store.read(plan_path)['shots']):
+                raise ValueError('Scene number is outside this production')
+            raghu_names=invalidate_scene_media(root,ident_scene,archive)
         correction_path=root/'corrections.json'
         corrections=store.read(correction_path) if correction_path.exists() else {}
         for kind in ('still','motion'):
@@ -240,7 +248,7 @@ def archive_scene(ident,number):
         names += [f'check-{number:02d}-{i}.png' for i in range(4)]
         import re
         names+= [p.name for p in root.iterdir() if p.is_file() and re.fullmatch(rf'(scene|raw|speech|voice|clip|review-still|review-motion|review-audio|review-narration|review-performance|check|packet)-{number:02d}(?:-[a-z0-9]+)*\.(?:png|mp4|wav|json|operation\.json)',p.name)]
-        names=list(set(names))
+        names=list(set(names+raghu_names))
         for name in names:
             target=(root/name).resolve()
             if target.parent!=root or not archive.resolve().is_relative_to(root): raise ValueError('Invalid artifact path')
