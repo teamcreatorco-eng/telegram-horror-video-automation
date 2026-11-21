@@ -10,6 +10,14 @@ Send a title or tap **Generate** in Telegram. Choose 2, 5, or 10 minutes, or ent
 
 Both hosts run the same production code and use a rented Vast GPU. Use `/setup` before your first run and `/status` to recover a paused job.
 
+Normal Telegram requests use **full generation**, with `RAGHU_PLAN_ONLY=false`:
+choose duration → choose one of two scripts → scene prompts and reference images →
+GPU motion and narrator generation → verified asset collection → editing and delivery.
+The normal workflow does not stop after planning. `ALLOW_PAID_GENERATION` stays `false`
+in a fresh environment until onboarding is complete and the owner enables paid work.
+
+[Included fixes, recovery behavior and verification limits](docs/production-recovery-release.md)
+
 ### Natural narrator timing
 
 Chatterbox runs one resumable narration job for the complete selected story. Long stories
@@ -45,8 +53,8 @@ compiled-scene planner. The ten-minute option no longer selects an older storybo
 New Telegram video requests write two complete Hindi script options after the duration
 is selected. Telegram shows both scripts and **Use script 1 / Use script 2** buttons.
 No shot prompts, images, or GPU rental start until a script is selected. The selected
-script is reused verbatim as the input to the existing planner. Saved productions and
-planning-only requests retain their existing behavior. `/status` can show the options again.
+script is reused verbatim as the input to the existing planner. Saved productions retain
+their checkpoints. `/status` can show the options again.
 
 For new rentals, set `RAGHU_GPU=RTX_5090` and `RAGHU_QUANTIZATION=nvfp4` to use the
 approved compact LTX checkpoint. Image generation, 1280x768 output, frame count,
