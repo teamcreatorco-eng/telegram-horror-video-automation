@@ -9,6 +9,28 @@ import pytest
 from app import media, raghu_pipeline, raghu_narration, store
 
 
+@pytest.mark.parametrize('music', [False, True])
+def test_narrated_intro_export_has_compatible_audio_streams(tmp_path, monkeypatch, music):
+    if not media.available(): pytest.skip('FFmpeg required')
+    monkeypatch.setenv('RAGHU_NARRATION_PROVIDER', 'edge')
+    monkeypatch.setenv('RAGHU_MOTION_MODEL', 'ltx')
+    monkeypatch.setenv('RAGHU_LTX_END_FRAME', 'false')
+    intro=tmp_path/'intro.mp4'
+    media.ff('-f','lavfi','-i','color=c=black:s=64x64:r=24','-f','lavfi','-i','anullsrc=r=48000:cl=stereo',
+             '-t','6','-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac','-ar','48000','-ac','2',intro)
+    media.ff('-f','lavfi','-i','color=c=blue:s=64x64:r=24','-t','1','-an','-c:v','libx264',
+             '-pix_fmt','yuv420p',tmp_path/'shot-001.mp4')
+    voice=raghu_narration.narrator_folder(tmp_path);voice.mkdir()
+    media.ff('-f','lavfi','-i','sine=frequency=440:sample_rate=24000','-t','1',voice/'narration-001.wav')
+    monkeypatch.setattr(raghu_pipeline,'opening_path',lambda:intro)
+    monkeypatch.setattr(raghu_pipeline.raghu_music,'source',lambda:None)
+    raghu_pipeline.edit(tmp_path,{'shots':[dict(id='001',narration='वह रुका।')]},lambda:None,music=music,opening=True)
+    final=tmp_path/'final.mp4'
+    audio=next(s for s in media.probe(final)['streams'] if s['codec_type']=='audio')
+    assert audio['sample_rate']=='48000' and audio['channels']==2
+    assert abs(media.duration(final)-7)<.15
+
+
 def test_editor_follows_speech_without_retiming_or_removing_breaths(tmp_path, monkeypatch):
     if not media.available():
         pytest.skip('FFmpeg required')

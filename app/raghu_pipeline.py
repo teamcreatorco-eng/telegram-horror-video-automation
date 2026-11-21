@@ -1218,7 +1218,7 @@ def edit(folder, shot_plan, check, *, music=True, opening=False):
         media.ff("-f", "concat", "-safe", "1", "-i", audio_concat, "-c:a", "pcm_s16le", speech_track)
         # Encode speech once for the whole film, avoiding AAC padding between scenes.
         media.ff("-i", picture, "-i", speech_track, "-map", "0:v:0", "-map", "1:a:0",
-                 "-c:v", "copy", "-af", "loudnorm=I=-16:TP=-2:LRA=9", "-c:a", "aac", "-b:a", "160k", joined)
+                 "-c:v", "copy", "-af", "loudnorm=I=-16:TP=-2:LRA=9", "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "160k", joined)
         final = scratch / "final.mp4"
         if music:
             bed = scratch / "bed.wav"
@@ -1250,7 +1250,7 @@ def edit(folder, shot_plan, check, *, music=True, opening=False):
                      "[0:a]asplit[narr][key];"
                      "[score][key]sidechaincompress=threshold=0.042:ratio=3:attack=15:release=200[duck];"
                      "[narr][duck]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.90:level=false[a]",
-                     "-map", "0:v:0", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k",
+                     "-map", "0:v:0", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "160k",
                      "-movflags", "+faststart", final)
         else:
             shutil.copyfile(joined, final)
