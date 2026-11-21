@@ -31,6 +31,14 @@ credential, audio-timing and file-readability errors are still reported accurate
 
 [Setup and recovery reference](docs/raghu-railway.md)
 
+Windows localhost installations can create a **Start Horror Automation** desktop shortcut
+with `scripts/install-local-shortcut.ps1` after setting up `.venv`. Double-click it after
+a reboot to start the controller, then use Telegram to resume saved jobs. See
+[localhost restart instructions](ONBOARDING.md#windows-desktop-shortcut-for-localhost).
+
+All new Clone productions, from 30 seconds through ten minutes, use the same approved
+compiled-scene planner. The ten-minute option no longer selects an older storyboard writer.
+
 
 ### Script choice and approved fast motion
 

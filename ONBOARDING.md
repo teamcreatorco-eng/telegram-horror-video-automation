@@ -9,6 +9,24 @@ In Codex, say **“Clone this repository”** and paste its GitHub URL. After op
 
 Both hosts use the same writer, motion model, voice clone and editor. AI image and video reviewers are disabled. Generated files are checked for readability before use. The AI weights are downloaded to the rented Vast GPU host in both modes. Localhost installs the controller and editing tools on your computer.
 
+### Windows desktop shortcut for localhost
+
+During localhost onboarding, install dependencies in a project environment:
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt vastai==1.9.1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-local-shortcut.ps1
+```
+
+After credentials and private assets are installed, double-click **Start Horror Automation**
+on your desktop (or `start-local.cmd` in this folder). It starts the controller in the background
+and opens a local status page. Use Telegram for generation and `/status` or **Retry this step**
+for saved jobs. After shutting down and restarting the laptop, double-click the same shortcut.
+Keep the checkout and `data/` folder in place. The launcher reuses a running controller and
+does not automatically resume paid jobs. Logs are in `data/local-host/server.log` (or your
+configured `DATA_DIR/local-host/server.log`). A sleeping or switched-off laptop cannot run the bot.
+
 ## 2. Enter your own credentials
 
 - **Telegram.** Open **BotFather**, send `/newbot`, and follow its prompts. Paste the token as `TELEGRAM_BOT_TOKEN`. After the service starts, send `/id` to your new bot in a private chat. Put the number it returns in `TELEGRAM_ALLOWED_USER_IDS` and restart or redeploy. Use one running deployment per bot token. [BotFather](https://t.me/BotFather)

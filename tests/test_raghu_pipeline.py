@@ -713,6 +713,8 @@ def test_motion_queue_prefetches_next_batch_and_preserves_failed_review(monkeypa
 
     monkeypatch.setattr(raghu_pipeline, "validate_motion", review)
     shots = [{"id": f"{i:03}", "motion": "Walk forward into the room."} for i in range(1, 7)]
+    for shot in shots:
+        (tmp_path / f"still-{shot['id']}.png").write_bytes(b'fixture opening image')
     blocked = raghu_pipeline.render_motion_queue(Remote(), tmp_path, shots, {}, lambda: None, lambda *args: None)
     assert [[item["id"] for item in batch] for batch in submissions] == [
         ["001", "002", "003", "004", "005"], ["006"], ["001"],
@@ -744,6 +746,8 @@ def test_motion_queue_resumes_a_saved_rejection_as_a_retake(monkeypatch, tmp_pat
     monkeypatch.setattr(raghu_pipeline, "validate_motion", review)
     (tmp_path / "shot-001.mp4").write_bytes(b"first attempt")
     shots = [{"id": "001", "motion": "She reaches toward the chest. The camera is locked."}]
+    for shot in shots:
+        (tmp_path / f"still-{shot['id']}.png").write_bytes(b'fixture opening image')
     assert raghu_pipeline.render_motion_queue(Remote(), tmp_path, shots, {}, lambda: None, lambda *args: None) == []
     assert len(submissions) == 1
     assert submissions[0]["seed"] == 56401
@@ -779,6 +783,8 @@ def test_simple_motion_rewrites_only_the_failed_shot_twice(monkeypatch, tmp_path
     monkeypatch.setattr(raghu_pipeline.media, "ff", lambda *args: None)
     monkeypatch.setattr(raghu_pipeline, "rewrite_still_prompt", rewrite)
     shots = [{"id": ident, "motion": "Raise the lid.", "simple_prompt": True} for ident in ("001", "002")]
+    for shot in shots:
+        (tmp_path / f"still-{shot['id']}.png").write_bytes(b'fixture opening image')
     assert raghu_pipeline.render_motion_queue(Remote(), tmp_path, shots, {}, lambda: None, lambda *args: None) == [
         "001: The lid remains closed."
     ]

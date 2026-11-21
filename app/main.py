@@ -68,4 +68,5 @@ async def lifespan(app):
 app=FastAPI(title='Nightfall Telegram Backend',lifespan=lifespan,docs_url=None,redoc_url=None,openapi_url=None)
 
 @app.get('/healthz')
-def health():return {'ok':True,'interface':'telegram','telegram_configured':bool(os.getenv('TELEGRAM_BOT_TOKEN')),'telegram_state':telegram_bot.STATE}
+def health():return {'ok':True,'interface':'telegram','telegram_configured':bool(os.getenv('TELEGRAM_BOT_TOKEN')),'telegram_state':telegram_bot.STATE,
+                     'local_instance':os.getenv('NIGHTFALL_LOCAL_INSTANCE')}

@@ -41,6 +41,7 @@ def test_legacy_clone_still_promotes_opening_to_primary_instruction():
 
 
 def test_visual_retake_updates_only_the_rejected_character(monkeypatch, tmp_path):
+    monkeypatch.setattr(raghu_pipeline,'AI_VISUAL_REVIEW',True)
     plan = {"cast": [
         {"tag": "BUA", "prompt": "Reference sheet. Adult Indian woman, age 55, in a green sari. "
          "Neutral full-body three-quarter pose and front-facing expression inset."},
