@@ -27,7 +27,7 @@ EFFECTS = {
     "rain": (1.7, 102, 0, .87, .08),
     "bell": (1.15, 880, -34, .03, .22),
     "rattle": (.38, 670, -550, .58, .11),
-    "radio": (4.0, 350, 0, .98, .18),
+    "radio": (.55, 350, 0, .98, .08),
     "break_glass": (1.1, 2100, -1200, .90, .28),
     "break": (.65, 160, -160, .85, .26),
     "sizzle": (3.0, 850, 0, .97, .15),
@@ -40,7 +40,8 @@ EFFECTS = {
     "thunder": (3.0, 48, -12, .85, .23),
     "laugh": (2.0, 250, 0, .25, .17),
 }
-AMBIENT = {"fire", "rain", "wind", "radio", "sizzle"}
+AMBIENT = {"fire", "rain", "wind"}
+MAX_TEXTURE_SECONDS = {'radio': .55, 'sizzle': 1.1}
 ALIASES = {"radio_static": "radio", "static": "radio", "static_noise": "radio",
            "glass_break": "break_glass", "glass": "break_glass", "shatter": "break_glass",
            "breaking": "break", "crack": "break", "footsteps": "footstep",
@@ -125,7 +126,7 @@ def resolve_shot_sound(shot):
                 continue
             for name, pattern in patterns.items():
                 if re.search(pattern, clause, re.I) and not any(c['effect'] == name for c in cues):
-                    cues.append(dict(effect=name, at=0 if name in AMBIENT else .5))
+                    cues.append(dict(effect=name, at=0 if name in AMBIENT or name == 'radio' else .5))
     return dict(score=shot.get('score') or score, sound_cues=cues,
                 unresolved_sound_cues=list(dict.fromkeys(unknown)))
 
@@ -150,7 +151,7 @@ def recorded_samples(name):
         return None
 
 
-def render_cues(path, timeline, opening_seconds, seconds):
+def render_cues(path, timeline, opening_seconds, seconds, *, bus='all'):
     samples = array("h", [0]) * round(seconds * RATE)
     rng = random.Random(40)
     report = []
@@ -170,10 +171,15 @@ def render_cues(path, timeline, opening_seconds, seconds):
             runs.append((score, start, end))
         for cue in shot["sound_cues"]:
             name = effect_name(cue["effect"])
+            if bus == 'ambience' and name not in AMBIENT:
+                continue
+            if bus == 'effects' and name in AMBIENT:
+                continue
             effect = EFFECTS.get(name)
             if effect is None:
                 continue
             duration, pitch, sweep, noise, gain = effect
+            duration = min(duration, MAX_TEXTURE_SECONDS.get(name, duration))
             ambient = name in AMBIENT
             if ambient:
                 duration = max(.01, (end - start) / RATE * (1 - cue["at"]))
@@ -182,6 +188,7 @@ def render_cues(path, timeline, opening_seconds, seconds):
             recording = recorded_samples(name)
             entry = dict(shot=shot.get('id'), effect=name, at_seconds=onset / RATE,
                          final_at_seconds=onset / RATE + opening_seconds,
+                         bus='ambience' if ambient else 'effects',
                          kind='recorded' if recording else 'synthesized')
             if recording:
                 data, peak, rms, metadata = recording
@@ -189,9 +196,11 @@ def render_cues(path, timeline, opening_seconds, seconds):
                 # Peak-only normalization hides quiet Foley beneath narration when
                 # a recording has a single large transient. Match useful RMS and
                 # soften isolated peaks on the effects bus, never on speech files.
-                target_rms = max(.025, gain * .20) if ambient else gain * .33
+                target_rms = .012 if ambient else (.010 if name == 'radio' else gain * .33)
                 scale = target_rms / max(1, rms)
                 count = (end - onset) if ambient else min(end - onset, len(data))
+                if name in MAX_TEXTURE_SECONDS:
+                    count = min(count, round(MAX_TEXTURE_SECONDS[name] * RATE))
                 overlap = min(round(.03 * RATE), len(data) // 4)
                 stride = max(1, len(data) - overlap)
                 for relative in range(max(0, count)):
@@ -217,7 +226,7 @@ def render_cues(path, timeline, opening_seconds, seconds):
             entry['end_seconds'] = min(end / RATE, onset / RATE + duration)
             report.append(entry)
 
-    for score, start, end in runs:
+    for score, start, end in (runs if bus == 'all' else []):
         if score not in SCORE:
             continue
         low, high = SCORE[score]
@@ -234,11 +243,34 @@ def render_cues(path, timeline, opening_seconds, seconds):
     return report
 
 
-def mix_soundtrack(source, target, cues, bed=None):
+def render_scene_audio(cues, ambience, timeline, opening_seconds, seconds):
+    return (render_cues(cues, timeline, opening_seconds, seconds, bus='effects')
+            + render_cues(ambience, timeline, opening_seconds, seconds, bus='ambience'))
+
+
+def mix_soundtrack(source, target, cues, bed=None, ambience=None):
     """Keep picture packets and speech timing; duck music, not action transients."""
     from . import media
     args = ['-i', source, '-i', cues]
-    if bed:
+    if ambience:
+        ambient_index = 2 + bool(bed)
+        if bed:
+            args += ['-i', bed]
+        args += ['-i', ambience]
+        # Split the original audio only as a sidechain key; its timing is untouched.
+        filters = '[0:a]asplit=3[voice][music_key][ambient_key];'
+        if bed:
+            filters += ('[2:a][music_key]sidechaincompress=threshold=0.042:ratio=3:attack=15:release=200[music];')
+            music_label = '[music]'
+        else:
+            filters += '[music_key]anullsink;'
+            music_label = ''
+        filters += (f'[{ambient_index}:a]aformat=sample_rates=48000:channel_layouts=stereo[ambient];'
+                    '[ambient][ambient_key]sidechaincompress=threshold=0.015:ratio=8:attack=8:release=250[quiet_ambient];'
+                    '[1:a]aformat=sample_rates=48000:channel_layouts=stereo[fx];'
+                    f'[voice]{music_label}[quiet_ambient][fx]amix=inputs={4 if bed else 3}:'
+                    'duration=first:normalize=0,alimiter=limit=0.95:level=false[a]')
+    elif bed:
         args += ['-i', bed]
         filters = ('[0:a]asplit[voice][key];'
                    '[2:a][key]sidechaincompress=threshold=0.042:ratio=3:attack=15:release=200[music];'

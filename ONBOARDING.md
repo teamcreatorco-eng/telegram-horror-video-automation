@@ -47,6 +47,9 @@ is required. The recorded library adds roughly 3 MB to the checkout and Docker i
 See `app/sound_assets/LICENSES.md` for sources. Inspect each job's
 `sound-effects-report.json` for selected assets, times, synthesized fallbacks and
 unrecognized names. Quiet scenes remain quiet; effects are not guessed from narration.
+Radio interference is a short texture rather than continuous hiss. Sustained rain/fire/wind
+ambience uses a separate quiet bus and is lowered under speech; short action impacts remain
+separate from that bus. Both recorded sounds and synthesized fallbacks respect texture limits.
 
 ### Windows desktop shortcut for localhost
 

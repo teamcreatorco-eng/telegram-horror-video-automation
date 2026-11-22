@@ -128,9 +128,9 @@ def test_synthesized_scene_score_is_routed_separately_from_effects(tmp_path, mon
              '-c:v', 'libx264', tmp_path / 'shot-001.mp4')
     calls = []
     original = raghu_pipeline.render_cues
-    def render(path, timeline, *args):
+    def render(path, timeline, *args, **kwargs):
         calls.append((path.name, timeline))
-        return original(path, timeline, *args)
+        return original(path, timeline, *args, **kwargs)
     monkeypatch.setattr(raghu_pipeline, 'render_cues', render)
     raghu_pipeline.edit(tmp_path, {'shots': [{'id': '001', 'sound_design': '[score:dread] [effect:knock@0.5]'}]},
                         lambda: None, music=True, opening=False)
@@ -138,3 +138,47 @@ def test_synthesized_scene_score_is_routed_separately_from_effects(tmp_path, mon
     score = next(rows for name, rows in calls if name == 'scene-score.wav')
     assert all(row['score'] == 'none' for row in effects)
     assert all(not row['sound_cues'] for row in score)
+
+
+def test_radio_static_is_a_brief_texture_not_whole_shot_rain(tmp_path):
+    out = tmp_path / 'radio.wav'
+    report = raghu_sound.render_cues(out, [{'id': '001', 'start': 0, 'seconds': 5,
+        'score': 'none', 'sound_cues': [{'effect': 'radio', 'at': .2}]}], 0, 5)
+    assert report[0]['end_seconds'] - report[0]['at_seconds'] <= .61
+    with wave.open(str(out)) as stream:
+        data = array('h', stream.readframes(stream.getnframes()))
+    assert max(abs(x) for x in data[2*raghu_sound.RATE:]) == 0
+
+
+def test_ambience_is_quiet_and_separated_from_impacts(tmp_path):
+    timeline = [{'id': '001', 'start': 0, 'seconds': 3, 'score': 'none',
+                 'sound_cues': [{'effect': 'rain', 'at': 0}, {'effect': 'knock', 'at': .5}]}]
+    fx, ambient = tmp_path / 'fx.wav', tmp_path / 'ambience.wav'
+    report = raghu_sound.render_scene_audio(fx, ambient, timeline, 0, 3)
+    assert {r['bus'] for r in report} == {'ambience', 'effects'}
+    with wave.open(str(fx)) as stream:
+        data = array('h', stream.readframes(stream.getnframes()))
+    assert max(abs(x) for x in data[:raghu_sound.RATE]) == 0
+    with wave.open(str(ambient)) as stream:
+        data = array('h', stream.readframes(stream.getnframes()))
+    rms_db = 20*math.log10(math.sqrt(sum(x*x for x in data)/len(data))/32768)
+    assert -44 < rms_db < -35
+
+
+def test_ambient_noise_ducks_beneath_voice_without_altering_video(tmp_path):
+    if not media.available(): pytest.skip('FFmpeg required')
+    source, cues, ambient, output = [tmp_path / x for x in ['voice.mp4','fx.wav','ambience.wav','mix.mp4']]
+    media.ff('-f','lavfi','-i','color=c=blue:s=64x64:r=24','-f','lavfi','-i',
+             'sine=frequency=440:sample_rate=48000','-t','3','-c:v','libx264','-c:a','aac',source)
+    media.tone(cues,3,'none')
+    media.ff('-f','lavfi','-i','anoisesrc=color=pink:amplitude=0.03:r=24000',
+             '-t','3','-ac','1',ambient)
+    raghu_sound.mix_soundtrack(source,output,cues,ambience=ambient)
+    assert abs(media.duration(source)-media.duration(output)) < .05
+
+
+def test_synthesized_fallback_respects_short_texture_duration(tmp_path, monkeypatch):
+    monkeypatch.setattr(raghu_sound, 'recorded_samples', lambda name: None)
+    report = raghu_sound.render_cues(tmp_path/'sizzle.wav', [{'id':'001','start':0,'seconds':5,
+        'score':'none','sound_cues':[{'effect':'sizzle','at':0}]}],0,5)
+    assert report[0]['end_seconds'] <= 1.1

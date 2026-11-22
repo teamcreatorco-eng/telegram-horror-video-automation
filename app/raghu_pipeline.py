@@ -1329,10 +1329,12 @@ def edit(folder, shot_plan, check, *, music=True, opening=False, sound_effects=T
         effects_report = []
         if music or sound_effects:
             cues = scratch / "cues.wav"
+            ambience = scratch / 'ambience.wav'
             cue_timeline = [{**row, "score": "none",
                              "sound_cues": row["sound_cues"] if sound_effects else []} for row in timeline]
-            effects_report = render_cues(cues, cue_timeline, opening_seconds, cursor)
-            mix_soundtrack(joined, final, cues, bed)
+            effects_report = render_cues(cues, cue_timeline, opening_seconds, cursor, bus='effects')
+            effects_report += render_cues(ambience, cue_timeline, opening_seconds, cursor, bus='ambience')
+            mix_soundtrack(joined, final, cues, bed, ambience=ambience)
         else:
             shutil.copyfile(joined, final)
         store.save(folder / 'sound-effects-report.json', dict(effects=effects_report,
