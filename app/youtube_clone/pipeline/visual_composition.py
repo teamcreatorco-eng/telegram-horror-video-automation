@@ -28,9 +28,10 @@ speaks to another established man, preserve those identities; do not add a girl 
 generic listener. A location reference provides geometry, never permission to add cast.
 In sound_design, start with one score tag [score:unease], [score:suspense], or [score:dread].
 Add only audible scene effects as [effect:name@fraction], where fraction is 0 to 1 within
-this shot and name is fire, rain, wind, footstep, knock, creak, latch, rustle, thud, sting,
-bell or rattle. Example: [score:dread] [effect:fire@0] [effect:knock@0.6].
-Use fire/rain/wind for ambience present in the scene; time impacts to the action. Do not
+this shot and name is fire, rain, wind, radio, sizzle, footstep, knock, creak, latch,
+rustle, thud, sting, bell, rattle, break_glass, break, drip, slam, whisper, heartbeat,
+breath, laugh, whoosh or thunder. Example: [score:dread] [effect:radio@0] [effect:knock@0.6].
+Use fire/rain/wind/radio/sizzle for audible ambience present in the scene; time impacts to the action. Do not
 add an effect for an absent, extinguished or merely mentioned sound source.
 
 Plan one visible action OR one emotional reaction per shot, approximately five seconds.

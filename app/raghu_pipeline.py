@@ -16,7 +16,7 @@ from pathlib import Path
 from PIL import Image
 
 from . import media, raghu_narration, store
-from .raghu_sound import render_cues
+from .raghu_sound import render_cues, resolve_shot_sound, mix_soundtrack
 from . import raghu_music
 from .raghu_services import ASSETS, STYLE, GeminiUnavailable, choose_title, narrate, plan, required, review_continuity, review_motion, review_still, rewrite_still_prompt
 from .raghu_vast import VastConnectionLost, image_model, motion_model, rent, uses_ending_image
@@ -1212,7 +1212,7 @@ def narration(folder, shots, check, progress):
         if i % 10 == 0:
             progress(f"Narration {i+1}/{len(shots)}", 81)
 
-def edit(folder, shot_plan, check, *, music=True, opening=False):
+def edit(folder, shot_plan, check, *, music=True, opening=False, sound_effects=True):
     """Retain a full frame at each cut and derive each shot end from its spoken line."""
     cuts = []
     timeline = []
@@ -1231,6 +1231,7 @@ def edit(folder, shot_plan, check, *, music=True, opening=False):
         scratch = Path(scratch)
         for index, shot in enumerate(shot_plan["shots"]):
             check()
+            sound = resolve_shot_sound(shot)
             ident = shot["id"]
             clip = folder / f"shot-{ident}.mp4"
             if raghu_narration.uses_clone():
@@ -1279,8 +1280,7 @@ def edit(folder, shot_plan, check, *, music=True, opening=False):
             audio_cuts.append(trimmed)
             cuts.append(cut)
             timeline.append({"id": ident, "start": round(cursor + opening_seconds, 4), "seconds": length,
-                             "narration": shot.get("narration", ""), "score": shot.get("score", "none"),
-                             "sound_cues": shot.get("sound_cues", [])})
+                             "narration": shot.get("narration", ""), **sound})
             cursor += length
         concat = scratch / "cuts.ffconcat"
         concat.write_text("ffconcat version 1.0\n" + "".join(f"file {p.name}\n" for p in cuts), encoding="ascii")
@@ -1292,9 +1292,12 @@ def edit(folder, shot_plan, check, *, music=True, opening=False):
         speech_track = scratch / "speech.wav"
         media.ff("-f", "concat", "-safe", "1", "-i", audio_concat, "-c:a", "pcm_s16le", speech_track)
         # Encode speech once for the whole film, avoiding AAC padding between scenes.
+        speech_filter = "anull" if raghu_narration.silent() else "loudnorm=I=-16:TP=-2:LRA=9"
         media.ff("-i", picture, "-i", speech_track, "-map", "0:v:0", "-map", "1:a:0",
-                 "-c:v", "copy", "-af", "loudnorm=I=-16:TP=-2:LRA=9", "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "160k", joined)
+                 "-c:v", "copy", "-af", speech_filter, "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "160k", joined)
         final = scratch / "final.mp4"
+        bed = None
+        music_source = None
         if music:
             bed = scratch / "bed.wav"
             music_source = raghu_music.source()
@@ -1316,19 +1319,25 @@ def edit(folder, shot_plan, check, *, music=True, opening=False):
                          "-af", f"highpass=f=32,lowpass=f=1700,volume=1.50,afade=t=in:d=0.25,"
                                 f"afade=t=out:st={max(0, cursor-.7):.6f}:d=0.7",
                          "-t", f"{cursor:.6f}", bed)
+                scene_score = scratch / 'scene-score.wav'
+                render_cues(scene_score, [{**row, 'sound_cues': []} for row in timeline], opening_seconds, cursor)
+                combined_bed = scratch / 'combined-bed.wav'
+                media.ff('-i', bed, '-i', scene_score, '-filter_complex',
+                         '[0:a][1:a]amix=inputs=2:duration=first:normalize=0[a]',
+                         '-map', '[a]', '-ar', '48000', '-ac', '2', combined_bed)
+                bed = combined_bed
+        effects_report = []
+        if music or sound_effects:
             cues = scratch / "cues.wav"
-            cue_timeline = [{**row, "score": "none"} for row in timeline] if music_source else timeline
-            render_cues(cues, cue_timeline, opening_seconds, cursor)
-            media.ff("-i", joined, "-i", bed, "-i", cues, "-filter_complex",
-                     "[2:a]aformat=sample_rates=48000:channel_layouts=stereo[scene];"
-                     "[1:a][scene]amix=inputs=2:duration=first:normalize=0[score];"
-                     "[0:a]asplit[narr][key];"
-                     "[score][key]sidechaincompress=threshold=0.042:ratio=3:attack=15:release=200[duck];"
-                     "[narr][duck]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.90:level=false[a]",
-                     "-map", "0:v:0", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "160k",
-                     "-movflags", "+faststart", final)
+            cue_timeline = [{**row, "score": "none",
+                             "sound_cues": row["sound_cues"] if sound_effects else []} for row in timeline]
+            effects_report = render_cues(cues, cue_timeline, opening_seconds, cursor)
+            mix_soundtrack(joined, final, cues, bed)
         else:
             shutil.copyfile(joined, final)
+        store.save(folder / 'sound-effects-report.json', dict(effects=effects_report,
+                   unresolved=[dict(shot=row['id'], names=row['unresolved_sound_cues'])
+                               for row in timeline if row['unresolved_sound_cues']]))
         if opening:
             shutil.copyfile(opening_file, scratch / "opening.mp4")
             final.replace(scratch / "story.mp4")
@@ -1452,7 +1461,9 @@ def work(ident, folder, request, check, progress):
     narration(folder, shot_plan["shots"], check, progress)
     progress("Editing the silent video" if raghu_narration.silent()
              else "Editing picture to narration and mixing original horror ambience", 90)
-    edit(folder, shot_plan, check, opening=not raghu_narration.silent(), music=os.getenv("RAGHU_BACKGROUND_AUDIO", "true").lower() in {"1", "true", "yes"})
+    edit(folder, shot_plan, check, opening=not raghu_narration.silent(),
+         music=os.getenv("RAGHU_BACKGROUND_AUDIO", "true").lower() in {"1", "true", "yes"},
+         sound_effects=os.getenv("RAGHU_SOUND_EFFECTS", "true").lower() in {"1", "true", "yes"})
     logging.warning("Finished saved production %s", ident)
 
 def smoke(ident, folder, mode, check, progress):

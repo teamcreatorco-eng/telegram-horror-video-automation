@@ -35,6 +35,19 @@ conditioning, resolution, frames and sampling settings remain unchanged. Per-sta
 are written to `results/events.jsonl` on the GPU. A 20-second clip-render target is not a
 verified benchmark; cold setup and first-clip overhead must be counted separately.
 
+### Scene sound effects
+
+Keep `RAGHU_SOUND_EFFECTS=true` to mix action effects and scene ambience automatically.
+`RAGHU_BACKGROUND_AUDIO` controls the music separately. The planner supplies timed
+sound cues; the editor places them after narration-driven picture cuts. Saved readable
+sound directions are also supported. Rain, fire, radio static, doors, pages, glass,
+water drips, boiling/sizzling, wind and nonverbal laughter use bundled CC0 recordings;
+other supported cues have locally synthesized fallbacks. No sound API key or GPU
+is required. The recorded library adds roughly 3 MB to the checkout and Docker image.
+See `app/sound_assets/LICENSES.md` for sources. Inspect each job's
+`sound-effects-report.json` for selected assets, times, synthesized fallbacks and
+unrecognized names. Quiet scenes remain quiet; effects are not guessed from narration.
+
 ### Windows desktop shortcut for localhost
 
 During localhost onboarding, install dependencies in a project environment:

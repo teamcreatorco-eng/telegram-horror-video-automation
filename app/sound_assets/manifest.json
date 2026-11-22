@@ -1,0 +1,98 @@
+{
+  "fire": {
+    "file": "fire.wav",
+    "license": "CC0-1.0",
+    "author": "AntumDeluge",
+    "source": "https://opengameart.org/content/fire-crackling",
+    "sha256": "2a6b7113c6b9f8db319851bbe805b3696cac3070551c64d20bbbd134d9f19ec5",
+    "bytes": 137868
+  },
+  "radio": {
+    "file": "radio.wav",
+    "license": "CC0-1.0",
+    "author": "xhunterko",
+    "source": "https://opengameart.org/content/static",
+    "sha256": "529b3ed0a1cb5977704d6bea27b2d94fb30eb0cf60f38227095bbacb6f3f4ba9",
+    "bytes": 576078
+  },
+  "rain": {
+    "file": "rain.wav",
+    "license": "CC0-1.0",
+    "author": "Ylmir",
+    "source": "https://opengameart.org/content/rain-loopable",
+    "sha256": "9101cd57a35e32cc7f782d4c2b119f7bc0aec77d55ce55a432eb3d4abfd70685",
+    "bytes": 576078
+  },
+  "break_glass": {
+    "file": "break_glass.wav",
+    "license": "CC0-1.0",
+    "author": "Till Behrend / TinyWorlds",
+    "source": "https://opengameart.org/content/glass-break",
+    "sha256": "d2437491accc86c7a86e11783ef3e7b499450b2cbb4cf76a88f53ba016cd277e",
+    "bytes": 62902
+  },
+  "rustle": {
+    "file": "rustle.wav",
+    "license": "CC0-1.0",
+    "author": "Voltiment555",
+    "source": "https://opengameart.org/content/book-flip-sounds",
+    "sha256": "4d3fe98ea010dd4dc724d552de5d5a88296da1ccdf00fa860fe113df4c9a3f93",
+    "bytes": 47202
+  },
+  "wind": {
+    "file": "wind.wav",
+    "license": "CC0-1.0",
+    "author": "IgnasD",
+    "source": "https://opengameart.org/content/wind",
+    "sha256": "723663b49804ce120e37dfd08e9ffbbf5dbf19fcfec73da486aca2e956b6d689",
+    "bytes": 318572
+  },
+  "drip": {
+    "file": "drip.wav",
+    "license": "CC0-1.0",
+    "author": "Independent.nu / qubodup",
+    "source": "https://opengameart.org/content/dripping-water-loop",
+    "sha256": "096aed1793225e7db566ab07d811eba7fe180b8c63a813a0ea71eb8189429e6d",
+    "bytes": 576078
+  },
+  "sizzle": {
+    "file": "sizzle.wav",
+    "license": "CC0-1.0",
+    "author": "TinyWorlds",
+    "source": "https://opengameart.org/content/boiling-water-loops",
+    "sha256": "a277ceec1590f3a3691e30b916cd2b656a044e45420cf7b9ef2443c58fe8bcb8",
+    "bytes": 233374
+  },
+  "creak": {
+    "file": "creak.wav",
+    "license": "CC0-1.0",
+    "author": "qubodup",
+    "source": "https://opengameart.org/content/door-open-door-close-set",
+    "sha256": "decc00870063ffe96c897ac058022ad6f1802c1ff5cb89b89acc176f81dd75dc",
+    "bytes": 48146
+  },
+  "latch": {
+    "file": "latch.wav",
+    "license": "CC0-1.0",
+    "author": "qubodup",
+    "source": "https://opengameart.org/content/door-open-door-close-set",
+    "sha256": "60c022435ad0d1dce1e2014207757cd0d7de3dde93c21448251a656db6cb4ebb",
+    "bytes": 48104
+  },
+  "slam": {
+    "file": "slam.wav",
+    "license": "CC0-1.0",
+    "author": "qubodup",
+    "source": "https://opengameart.org/content/door-open-door-close-set",
+    "sha256": "44207656bc49390f69c17712cc046c26136cdeef55a0c725fd6a6b41e1618e84",
+    "bytes": 48104
+  },
+  "laugh": {
+    "file": "laugh.wav",
+    "license": "CC0-1.0",
+    "author": "Venn Stone",
+    "source": "https://opengameart.org/content/evil-laughter-0",
+    "sha256": "eeccfab59cac49eb55769850baf0dfd5d7c2bd67a7e1cb54e4abbf26de8a5d94",
+    "bytes": 144144
+  }
+}
