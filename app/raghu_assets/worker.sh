@@ -152,6 +152,8 @@ case "$1" in
       video-env/bin/python -c 'from ltx_core.quantization.nvfp4 import require_nvfp4; require_nvfp4()'
     fi
     if [ "$1" = motion ]; then
+      rm -f results/video-decode-backend.json
+      video-env/bin/python motion_runtime.py || true
       video-env/bin/python videos.py
     fi
     ;;

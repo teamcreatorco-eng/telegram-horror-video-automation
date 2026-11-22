@@ -2,9 +2,11 @@ import hashlib,json,time,traceback,fcntl,os
 import torch
 from common import ROOT,RESULTS,event
 from motion_recovery import reusable,mark_complete
+from motion_runtime import configure_backend,instrument_pipeline
 def main():
  gpu_lock=(ROOT/'gpu-model.lock').open('w')
  fcntl.flock(gpu_lock,fcntl.LOCK_EX)
+ configure_backend(event)
  quantization=os.getenv("LTX_QUANTIZATION","fp8")
  if quantization=="nvfp4":
   from ltx_core.quantization.nvfp4 import build_nvfp4_prequant_policy as build_policy
@@ -22,9 +24,12 @@ def main():
  transformer=str(base/f'diffusion_models/ltx-2.5-22b-distilled-transformer-{weight}.safetensors')
  paths=ModelPaths.from_split(transformer_path=transformer,text_encoder_path=str(base/'text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors'),video_vae_path=str(base/'vae/ltx-2.5-video-vae-bf16.safetensors'),audio_vae_path=str(base/'vae/ltx-2.5-audio-vae-bf16.safetensors'))
  pipe=DistilledPipeline(model_paths=paths,spatial_upsampler_path=str(base/'latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors'),loras=[],quantization=build_policy(transformer),offload_mode=OffloadMode(os.getenv("LTX_OFFLOAD", "cpu")))
+ current_shot=[None]
+ instrument_pipeline(pipe,event,lambda:current_shot[0])
  event('video_model_ready',pipeline='DistilledPipeline',resolution=[1280,768],steps=[8,3],reference_video=False,control_lora=False,quantization=quantization,prompt_enhancement=False)
  def render(plan):
   for i,s in enumerate(plan["shots"]):
+   current_shot[0]=s['id']
    if reusable(RESULTS,s):
     event('video_recovered',id=s['id'])
     continue

@@ -81,7 +81,7 @@ def model_manifest(quantization):
 
 def cost_workload_key(quantization, model):
     # Include runtime/setup source as well as every model hash, without altering workers.
-    files = ['videos.py', 'worker.sh', 'common.py', 'download_video_only.py']
+    files = ['videos.py', 'worker.sh', 'common.py', 'download_video_only.py', 'motion_runtime.py']
     runtime = json.dumps({name: (ASSETS / name).read_bytes().hex() for name in files}, sort_keys=True).encode()
     conditioning = b'paired' if uses_ending_image() else b'opening-only'
     return raghu_cost.workload_key(model_manifest(quantization), RUNTIME_IMAGE.encode() + conditioning + runtime, quantization, model)
@@ -758,7 +758,7 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
             try:
                 worker=temp/'worker.sh'
                 worker.write_text((ASSETS/'worker.sh').read_text(encoding='utf-8-sig'),encoding='utf-8',newline='\n')
-                remote.push([worker,*[ASSETS/name for name in ('stills.py','videos.py','wan_worker.py','motion_recovery.py',"image_download.py")]])
+                remote.push([worker,*[ASSETS/name for name in ('stills.py','videos.py','wan_worker.py','motion_recovery.py',"image_download.py","motion_runtime.py")]])
                 token=os.getenv('HF_TOKEN','').strip()
                 if token:
                     hf=temp/'.env'
@@ -955,7 +955,7 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
             runtime.write_text(f"export LTX_QUANTIZATION={quantization}\nexport RAGHU_MOTION_MODEL={model}\n"
                                f"export RAGHU_IMAGE_MODEL={still_model}\n",
                                encoding="ascii", newline="\n")
-            remote.push([worker, model_file, runtime, *[ASSETS / name for name in ("common.py", "stills.py", "image_download.py", "videos.py", "motion_recovery.py",
+            remote.push([worker, model_file, runtime, *[ASSETS / name for name in ("common.py", "stills.py", "image_download.py", "motion_runtime.py", "videos.py", "motion_recovery.py",
                 "download_video_only.py", "wan_worker.py", "wan_setup.py",
                 "qwen_stills.py", "qwen-model-manifest.json", "hunyuan_worker.py", "hunyuan-model-manifest.json",
                 "style-wide.jpg", "style-interior.jpg")]])

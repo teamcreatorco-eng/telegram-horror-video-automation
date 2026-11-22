@@ -23,6 +23,18 @@ verified files and partial downloads. Do not destroy the preserved instance if y
 to keep those downloads. Stopped-instance disk storage can still incur Vast charges.
 External service failures remain possible; these checks do not guarantee a fixed setup time.
 
+### Video decoding acceleration
+
+The approved rented RTX 5090 runtime checks the optional NATTEN decoding kernel before
+motion rendering. On Linux x86-64, Python 3.12, Torch 2.10.0 and CUDA 13.0, it can install
+the matching official 185 MB binary with a pinned SHA-256 hash. This does not download
+another model or upgrade Torch. Already-working installations are reused. Kernel validation
+runs in a separate process; unavailable or incompatible acceleration keeps the existing
+fallback and records that limitation. Model weights, NVFP4 precision, prompts, opening-image
+conditioning, resolution, frames and sampling settings remain unchanged. Per-stage timings
+are written to `results/events.jsonl` on the GPU. A 20-second clip-render target is not a
+verified benchmark; cold setup and first-clip overhead must be counted separately.
+
 ### Windows desktop shortcut for localhost
 
 During localhost onboarding, install dependencies in a project environment:
