@@ -98,6 +98,14 @@ def check_model_access(models, token):
     except httpx.HTTPError:
         raise RuntimeError("Hugging Face could not be reached before rental.") from None
 
+
+def worker_hf_token(model, image_only):
+    # Public image downloads still benefit from the configured account credential.
+    configured = os.getenv('HF_TOKEN', '').strip()
+    if configured:
+        return configured
+    return required('HF_TOKEN') if model == 'ltx' and not image_only else None
+
 def vast(*args):
     key = required("VAST_API_KEY")
     def detail(value):
@@ -388,6 +396,25 @@ def ssh_failure(stderr):
     return "SSH connection closed before it was ready"
 
 
+def image_download_message(status):
+    files = status.get('files', {})
+    if not files:
+        return None
+    if files.get('manifest', {}).get('phase') == 'checking' and len(files) == 1:
+        return 'Checking image model download metadata'
+    records = [row for name, row in files.items() if name != 'manifest']
+    total = sum(row.get('total', 0) for row in records)
+    received = sum(row.get('bytes', 0) for row in records)
+    done = sum(row.get('phase') == 'verified' for row in records)
+    if records and done == len(records):
+        return 'Image model files verified · loading model / generating images'
+    attempt = max((row.get('attempt', 1) for row in records), default=1)
+    suffix = f' · retry {attempt}/3' if attempt > 1 else ''
+    verifying = any(row.get('phase') == 'verifying' for row in records)
+    return (f"{'Verifying' if verifying else 'Downloading'} image model · "
+            f'{received / 1e9:.2f}/{total / 1e9:.2f} GB · {done}/{len(records)} files verified{suffix}')
+
+
 class Remote:
     def __init__(self, row, key, temp, deadline, check, *, connecting=True, reported_endpoint=False):
         self.key, self.temp, self.deadline, self.check = key, temp, deadline, check
@@ -525,7 +552,9 @@ class Remote:
     def stream_stills(self, manifest_name, names, destination):
         """Copy each atomically completed still while the same FLUX process renders the next."""
         batch = "stills-" + uuid.uuid4().hex
+        self.phase('rm -f results/image-download-progress.json', 10)
         command = f"bash worker.sh stills {shlex.quote(manifest_name)} {batch} >results/{batch}.log 2>&1"
+        next_download_report = time.monotonic() + 15
         with ThreadPoolExecutor(max_workers=1) as worker:
             rendering = worker.submit(self.phase, command, 2400)
             for name in names:
@@ -535,8 +564,20 @@ class Remote:
                     if time.monotonic() >= self.deadline:
                         raise TimeoutError("Vast stills reached their deadline.")
                     if rendering.done():
-                        rendering.result()
+                        self.still_worker_result(rendering, destination)
                         break
+                    if time.monotonic() >= next_download_report:
+                        callback = getattr(self, 'image_download_progress', None)
+                        if callback:
+                            try:
+                                self.pull(['image-download-progress.json'], destination)
+                                status = store.read(destination / 'image-download-progress.json')
+                                message = image_download_message(status)
+                            except (RuntimeError, TimeoutError, OSError, ValueError):
+                                message = None  # Status delivery must not interrupt a valid transfer.
+                            if message:
+                                callback(message)
+                        next_download_report = time.monotonic() + 15
                     try:
                         self.phase(f"test -s {ready}", 10)
                         break
@@ -544,7 +585,21 @@ class Remote:
                         time.sleep(.5)
                 self.pull([name], destination, subdir=batch)
                 yield name
+            self.still_worker_result(rendering, destination)
+
+    def still_worker_result(self, rendering, destination):
+        try:
             rendering.result()
+        except RuntimeError:
+            message = None
+            try:
+                self.pull(['image-download-progress.json'], destination)
+                message = store.read(destination / 'image-download-progress.json').get('error')
+            except (RuntimeError, TimeoutError, OSError, ValueError):
+                pass
+            if isinstance(message, str) and message.startswith(('Image model ', 'Hugging Face image ')):
+                raise RuntimeError(message) from None
+            raise
 
     def phase(self, command, seconds):
         self.ssh(f"cd {REMOTE} && {command}", seconds)
@@ -703,7 +758,7 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
             try:
                 worker=temp/'worker.sh'
                 worker.write_text((ASSETS/'worker.sh').read_text(encoding='utf-8-sig'),encoding='utf-8',newline='\n')
-                remote.push([worker,*[ASSETS/name for name in ('stills.py','videos.py','wan_worker.py','motion_recovery.py')]])
+                remote.push([worker,*[ASSETS/name for name in ('stills.py','videos.py','wan_worker.py','motion_recovery.py',"image_download.py")]])
                 token=os.getenv('HF_TOKEN','').strip()
                 if token:
                     hf=temp/'.env'
@@ -725,8 +780,8 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
     workload = cost_workload_key(quantization, model) if model == 'ltx' else None
     observations = raghu_cost.load_observations(store.DATA / '_host-costs') if workload else []
     quote_time = time.time()
-    hf_token = None if image_only or model != "ltx" else required("HF_TOKEN")
-    if hf_token:
+    hf_token = worker_hf_token(model, image_only)
+    if hf_token and model == 'ltx' and not image_only:
         check_model_access(models, hf_token)
     # This estimate only screens offers. It is never a deadline for a running job.
     shots = 0 if image_only else (1 if pending_shots is None else pending_shots)
@@ -900,7 +955,7 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
             runtime.write_text(f"export LTX_QUANTIZATION={quantization}\nexport RAGHU_MOTION_MODEL={model}\n"
                                f"export RAGHU_IMAGE_MODEL={still_model}\n",
                                encoding="ascii", newline="\n")
-            remote.push([worker, model_file, runtime, *[ASSETS / name for name in ("common.py", "stills.py", "videos.py", "motion_recovery.py",
+            remote.push([worker, model_file, runtime, *[ASSETS / name for name in ("common.py", "stills.py", "image_download.py", "videos.py", "motion_recovery.py",
                 "download_video_only.py", "wan_worker.py", "wan_setup.py",
                 "qwen_stills.py", "qwen-model-manifest.json", "hunyuan_worker.py", "hunyuan-model-manifest.json",
                 "style-wide.jpg", "style-interior.jpg")]])

@@ -3,16 +3,15 @@ import sys
 import time
 import torch
 from diffusers import Flux2KleinPipeline
-from huggingface_hub import snapshot_download
+from image_download import prepare_flux
 from PIL import Image
 from common import ROOT, RESULTS, event
 
 tasks = json.loads((ROOT / sys.argv[1]).read_text(encoding="utf-8"))
-path = snapshot_download("black-forest-labs/FLUX.2-klein-4B",
-    revision="e7b7dc27f91deacad38e78976d1f2b499d76a294", local_dir=ROOT / "models/image",
-    token=False, allow_patterns=["model_index.json", "scheduler/*", "tokenizer/*",
-        "text_encoder/*", "transformer/*", "vae/*"], max_workers=2)
-pipe = Flux2KleinPipeline.from_pretrained(path, torch_dtype=torch.bfloat16).to("cuda")
+path = prepare_flux(ROOT, event)
+event("image_model_loading")
+pipe = Flux2KleinPipeline.from_pretrained(path, torch_dtype=torch.bfloat16, local_files_only=True).to("cuda")
+event("image_model_loaded")
 output_dir = RESULTS / sys.argv[2] if len(sys.argv) > 2 else RESULTS
 output_dir.mkdir(exist_ok=True)
 for task in tasks:

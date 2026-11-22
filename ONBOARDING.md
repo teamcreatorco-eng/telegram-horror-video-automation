@@ -9,6 +9,20 @@ In Codex, say **“Clone this repository”** and paste its GitHub URL. After op
 
 Both hosts use the same writer, motion model, voice clone and editor. AI image and video reviewers are disabled. Generated files are checked for readability before use. The AI weights are downloaded to the rented Vast GPU host in both modes. Localhost installs the controller and editing tools on your computer.
 
+### Image-model downloads and recovery
+
+The FLUX worker uses your `HF_TOKEN` privately on the rented host. It downloads the same
+pinned approved model, verifies file sizes and content hashes, and resumes saved partial
+files after an interrupted transfer. Telegram shows downloaded GB, verified file counts,
+and retries during the image stage; the stage percentage alone is not download progress.
+Transfers use a 20-second socket timeout and restart an attempt if it makes less than
+1 MiB of progress for 60 seconds. Each failed file gets up to three attempts. If access
+or networking still fails, the job reports the reason and uses the existing stop-and-preserve
+recovery path. Fix the reported account/network issue and select **Retry this step** to reuse
+verified files and partial downloads. Do not destroy the preserved instance if you want
+to keep those downloads. Stopped-instance disk storage can still incur Vast charges.
+External service failures remain possible; these checks do not guarantee a fixed setup time.
+
 ### Windows desktop shortcut for localhost
 
 During localhost onboarding, install dependencies in a project environment:

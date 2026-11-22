@@ -886,6 +886,7 @@ def generate(folder, ident, shot_plan, check, progress):
 
 
 def generate_on_rental(remote, folder, canonical, starts, shots, successors, approved_motion, check, progress):
+    remote.image_download_progress = lambda message: progress(message, 28)
     progress("Generating character and background images", 28)
     rejected = review_stills(remote, folder, canonical, check, lambda message: progress(message, 28))
     if rejected:
@@ -894,6 +895,7 @@ def generate_on_rental(remote, folder, canonical, starts, shots, successors, app
     remote.push(approved_canon)
     remote.phase("mv character-*.png background-*.png results/", 40)
     progress("Generating scene starting images", 42)
+    remote.image_download_progress = lambda message: progress(message, 42)
     rejected = review_stills(remote, folder, starts, check, lambda message: progress(message, 42))
     if rejected:
         if any(item.get("strict_opening") and item["file"] in rejected for item in starts):
