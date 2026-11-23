@@ -1,0 +1,42 @@
+{
+  "narrator.wav": {
+    "bytes": 755246,
+    "sha256": "325418b28b9104dfdf4f9f17f2d29b018d88c863fbd82486bf8e79f44ea4f625"
+  },
+  "opening.mp4": {
+    "bytes": 1080842,
+    "sha256": "55231a590f9de0ed1ebeab58c885d83e6052acfcb1cf9a499c740d7da7c45a43"
+  },
+  "music/ghostly-piano.mp3": {
+    "bytes": 2195834,
+    "sha256": "1d6d007e07fa3581a4390c9eb53ba36cefb49c9b3cd7d2f106c8d5d477e34d14"
+  },
+  "music/haunted-manor.mp3": {
+    "bytes": 2013394,
+    "sha256": "d9e0841483ec35f2ee6fef4f5bbf0817e6dbf513ad111ccfe188d20d94401043"
+  },
+  "music/midnight-graveyard.mp3": {
+    "bytes": 2206915,
+    "sha256": "ff3637b9efcd83dc5460cb995ab74dfd3a8e223ece49f65e63d9a9a0bbc9e333"
+  },
+  "music/shadows-halloween.mp3": {
+    "bytes": 1904765,
+    "sha256": "0b16741253e424ac4fff3a9c5e08d6626a3db1f20dbb2cf5e61c32fefb2d2ee6"
+  },
+  "music/previews/ghostly-piano.mp4": {
+    "bytes": 3142040,
+    "sha256": "d477de1ae0f9758877deed3b7f331184b39c90692df76675abdc447406e210ce"
+  },
+  "music/previews/haunted-manor.mp4": {
+    "bytes": 3143914,
+    "sha256": "e53132568a4c86a8166285178314c7344d3fd7b781b3c369eb219fe152f7e20b"
+  },
+  "music/previews/midnight-graveyard.mp4": {
+    "bytes": 3143054,
+    "sha256": "613f1c69766560531002ba7d9d130ac7173b3b7b149775fa9e14bc90ad902654"
+  },
+  "music/previews/shadows-halloween.mp4": {
+    "bytes": 3142655,
+    "sha256": "4ad58d6c5983d2bc36e217828ebca5fdce24816f0a6ed3a3b8cbeea39533347b"
+  }
+}

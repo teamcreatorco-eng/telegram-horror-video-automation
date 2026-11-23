@@ -1,10 +1,10 @@
 # Onboarding
 
-In Codex, say **“Clone this repository”** and paste its GitHub URL. After opening the checkout, say **“onboarding.”** The first question is **Railway or localhost?** Codex prepares the selected host, walks you through the credentials, and asks for the intro and disclaimer path.
+In Codex, say **“Clone this repository”** and paste its GitHub URL. After opening the checkout, say **“onboarding.”** The first question is **Railway or localhost?** Codex prepares the selected host and walks you through credentials. Music, previews, the narrator reference and intro/disclaimer are included; no media upload or file-path questions are needed.
 
 ## 1. Pick where the bot runs
 
-- **Localhost.** Install Python 3.11, FFmpeg (including FFprobe) and the OpenSSH client. From the repo, run `python -m pip install -r requirements.txt vastai==1.9.1`. Copy `.env.raghu.example` to `.env`. Run `python run.py` after entering credentials and installing the assets. Keep that process and the computer running when you use Telegram. Keep the generated `data/` folder so jobs can resume.
+- **Localhost.** Install Python 3.11, FFmpeg (including FFprobe) and the OpenSSH client. From the repo, run `python -m pip install -r requirements.txt vastai==1.9.1`. Copy `.env.raghu.example` to `.env`. Run `python run.py` after entering credentials. The default media is included. Keep that process and the computer running when you use Telegram. Keep the generated `data/` folder so jobs can resume.
 - **Railway.** In Railway, choose **New Project → Deploy from GitHub Repo** and select your fork. Keep one replica and attach a persistent volume at `/data`. Copy the settings from `.env.raghu.example` into the service’s **Variables** tab. The Docker image installs Python, FFmpeg, OpenSSH and the Vast CLI. [Volumes](https://docs.railway.com/volumes)
 
 Both hosts use the same writer, motion model, voice clone and editor. AI image and video reviewers are disabled. Generated files are checked for readability before use. The AI weights are downloaded to the rented Vast GPU host in both modes. Localhost installs the controller and editing tools on your computer.
@@ -47,17 +47,17 @@ Keep `RAGHU_BACKGROUND_AUDIO=true` when using the supplied track. It loops as
 needed at a moderate level, gently lowered beneath speech. The legacy `BGM_FILE`
 and default Obsidian path are ignored. No sound API key or extra GPU is needed.
 
-To enable Telegram's four music choices, obtain the course music pack containing
-Ghostly Piano Horror, Midnight Graveyard Ambient, Shadows of Halloween Night and
-The Haunted Manor. Keep it outside Git. Run `python -m app.install_music PATH_TO_PACK`
-on the chosen host; on Railway install it into the service's persistent `/data` volume.
-The pack may include `previews/ID.mp4` samples. Without supplied previews the installer
-creates short music-only title-card samples locally using FFmpeg. No GPU is rented.
+Telegram's four choices are included under `app/course_assets/music`: Ghostly Piano
+Horror, Midnight Graveyard Ambient, Shadows of Halloween Night and The Haunted Manor,
+with their approved narrated previews. Both localhost and the Railway Docker image
+read these files directly; no separate media upload, installer or API key is needed.
+Only if you request replacements, use `python -m app.install_music PATH_TO_PACK`
+to install custom tracks/previews in DATA_DIR. Those replacements stay out of Git.
 
 After choosing a duration, Telegram sends the available previews and asks for one
 track or **No music**. `/music` resends samples while this question is pending.
-Selection is saved per production. Without installed tracks, it proceeds with raw
-narration. All narration—including reported character speech—uses the same narrator.
+Selection is saved per production. **No music** keeps raw narration. All
+narration—including reported character speech—uses the same narrator.
 The approved mix applies narration gain 0.765 after normalization and -24 LUFS music
 with gentle speech ducking; speech pacing is unchanged.
 
@@ -71,7 +71,7 @@ py -3.11 -m venv .venv
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-local-shortcut.ps1
 ```
 
-After credentials and private assets are installed, double-click **Start Horror Automation**
+After credentials are configured, double-click **Start Horror Automation**
 on your desktop (or `start-local.cmd` in this folder). It starts the controller in the background
 and opens a local status page. Use Telegram for generation and `/status` or **Retry this step**
 for saved jobs. After shutting down and restarting the laptop, double-click the same shortcut.
@@ -90,12 +90,17 @@ configured `DATA_DIR/local-host/server.log`). A sleeping or switched-off laptop 
 
 Use the ignored `.env` locally or Railway Variables. When asking Codex for a setup check, say which step is done and keep the credential values in those settings.
 
-## 3. Install the intro and shared narrator
+## 3. Included intro and narrator
 
-- Provide the path to your **combined intro and disclaimer video** (at least six seconds). If they’re two files, tell Codex their order so it can join them first. The editor prepends the result to every story.
-- Use the instructor-provided **`web-6-narrator-reference.wav`** on every installation. If it is missing, get it from the course materials before testing. The bot clones that voice to read each new Hindi script. Character dialogue uses its own voices.
-- On **localhost**, Codex can install them with `python -m app.install_assets opening "PATH_TO_INTRO"` and `python -m app.install_assets narrator "PATH_TO_NARRATOR"`.
-- On **Railway**, use the service’s SSH connection to stream each file to the same installer on its volume. In a shell with binary-safe stdin redirection, use `ssh -T SERVICE_SSH_DESTINATION "cd /app && python -m app.install_assets opening -" < intro.mp4` and the equivalent `narrator -` command for the audio. Use the destination and SSH key from your own service. On Windows, Codex can pass file bytes to the SSH subprocess directly. [Railway SSH](https://docs.railway.com/cli/ssh)
+- `app/course_assets/opening.mp4` contains the approved combined intro/disclaimer.
+  The editor prepends it automatically.
+- `app/course_assets/narrator.wav` contains the approved Web 6 narrator reference.
+  The same voice reads the whole script, including reported character dialogue.
+- Leave `RAGHU_NARRATOR_REFERENCE` and `RAGHU_OPENING_PATH` blank for these defaults.
+  Students do not need to find or upload them.
+- Optional replacements: use `python -m app.install_assets opening "PATH_TO_INTRO"`
+  or `python -m app.install_assets narrator "PATH_TO_NARRATOR"` on the chosen host,
+  or set explicit paths. Existing installed replacements take priority over the bundle.
 
 Voice cloning is enabled in the template. Keep the same course reference on localhost and Railway.
 

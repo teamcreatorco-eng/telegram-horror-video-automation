@@ -63,6 +63,10 @@ def test_music_choice_survives_failed_preview_and_allows_no_music(service, monke
 
 @pytest.fixture
 def service(tmp_path,monkeypatch):
+    from app import bundled_media
+    # Most legacy cases exercise the no-catalog path. A dedicated case below
+    # restores the real bundle and verifies fresh-clone music selection.
+    monkeypatch.setattr(bundled_media,'ROOT',tmp_path/'no-course-assets')
     monkeypatch.setattr(store,'DATA',tmp_path)
     monkeypatch.delenv('DATABASE_URL',raising=False)
     monkeypatch.delenv('S3_BUCKET',raising=False)
@@ -73,6 +77,21 @@ def service(tmp_path,monkeypatch):
     monkeypatch.setattr(pipeline,'enqueue',lambda ident:True)
     store.init();auth.init();tg.init()
     return tg.Service(FakeAPI(),'900')
+
+
+def test_fresh_clone_sends_all_four_bundled_music_previews(service,monkeypatch):
+    from pathlib import Path
+    from app import bundled_media
+    monkeypatch.setattr(bundled_media,'ROOT',Path(__file__).resolve().parents[1]/'app/course_assets')
+    monkeypatch.setenv('MEDIA_BACKEND','raghu')
+    service.handle(update('/generate'))
+    service.handle(update('2 minutes',ident=2))
+    previews=[fields for method,fields,has_file in service.api.calls if method=='sendVideo']
+    assert len(previews)==4
+    assert {r['caption'] for r in previews} == {
+        'Ghostly Piano Horror','Midnight Graveyard Ambient',
+        'Shadows of Halloween Night','The Haunted Manor'}
+    assert not store.all_jobs()
 
 def update(text='Haunted road',uid=101,ident=1,kind='private'):
     return {'update_id':ident,'message':{'message_id':ident,'text':text,'chat':{'id':uid,'type':kind},'from':{'id':uid}}}

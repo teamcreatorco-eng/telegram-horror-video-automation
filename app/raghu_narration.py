@@ -9,7 +9,7 @@ import tempfile
 import wave
 from pathlib import Path
 
-from . import media, store
+from . import media, store, bundled_media
 from .narration_layout import VERSION, request_key
 
 VOICE = "hi-IN-MadhurNeural"
@@ -34,6 +34,8 @@ def clone_folder(folder):
 def clone_reference():
     configured = os.getenv("RAGHU_NARRATOR_REFERENCE")
     path = Path(configured) if configured else store.DATA / "_voice_refs" / "web-6-narrator-reference.wav"
+    if not configured and not path.is_file():
+        path = bundled_media.available('narrator.wav') or path
     if not path.is_file() or not 6 <= media.duration(path) <= 30:
         raise RuntimeError("The narrator voice reference is missing or unusable. No GPU was rented.")
     return path

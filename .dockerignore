@@ -8,6 +8,8 @@
 !app/youtube_clone/**
 !app/raghu_assets/
 !app/raghu_assets/**
+!app/course_assets/
+!app/course_assets/**
 **/__pycache__/
 !app/showcase_assets/
 !app/showcase_assets/peepal-wali-dayan.mp4

@@ -2,7 +2,7 @@
 import math
 import os
 from pathlib import Path
-from . import media, store
+from . import media, store, bundled_media
 
 CATALOG = {
     'ghostly-piano': 'Ghostly Piano Horror',
@@ -13,12 +13,14 @@ CATALOG = {
 
 
 def choices():
-    root = store.DATA / '_music' / 'catalog'
-    return [dict(id=ident, title=title, file=root / f'{ident}.mp3',
-                 preview=root / 'previews' / f'{ident}.mp4')
-            for ident, title in CATALOG.items()
-            if (root / f'{ident}.mp3').is_file()
-            and (root / 'previews' / f'{ident}.mp4').is_file()]
+    result = []
+    for ident, title in CATALOG.items():
+        for root in (store.DATA / '_music' / 'catalog', bundled_media.ROOT / 'music'):
+            track, preview = root / f'{ident}.mp3', root / 'previews' / f'{ident}.mp4'
+            if track.is_file() and preview.is_file():
+                result.append(dict(id=ident, title=title, file=track, preview=preview))
+                break
+    return result
 
 
 def source(selection=None):
@@ -27,10 +29,10 @@ def source(selection=None):
             return None
         if selection not in CATALOG:
             raise RuntimeError('Unknown background music selection')
-        path = store.DATA / '_music' / 'catalog' / f'{selection}.mp3'
-        if not path.is_file():
+        entry = next((entry for entry in choices() if entry['id'] == selection), None)
+        if entry is None:
             raise RuntimeError('The selected background music is not installed on this host')
-        return path
+        return entry['file']
     configured = os.getenv("RAGHU_USER_BGM_FILE", "").strip()
     if not configured:
         return None

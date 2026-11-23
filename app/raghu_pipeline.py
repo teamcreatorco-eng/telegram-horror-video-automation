@@ -16,7 +16,7 @@ from pathlib import Path
 from PIL import Image
 
 from . import media, raghu_narration, store
-from . import raghu_music
+from . import raghu_music, bundled_media
 from .raghu_services import ASSETS, STYLE, GeminiUnavailable, choose_title, narrate, plan, required, review_continuity, review_motion, review_still, rewrite_still_prompt
 from .raghu_vast import VastConnectionLost, image_model, motion_model, rent, uses_ending_image
 
@@ -93,7 +93,7 @@ def opening_path():
     if configured:
         return Path(configured)
     installed = store.DATA / "branding" / "opening.mp4"
-    return installed if installed.is_file() else OPENING
+    return installed if installed.is_file() else (bundled_media.available('opening.mp4') or OPENING)
 
 
 class RenderReviewNeedsRetake(RuntimeError):

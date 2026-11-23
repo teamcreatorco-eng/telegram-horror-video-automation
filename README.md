@@ -1,17 +1,17 @@
 # Telegram Horror Video Automation
 
-Send a title or tap **Generate** in Telegram. Choose 2, 5, or 10 minutes, or enter a custom duration. The bot plans a complete Hindi story, creates illustrated scenes and motion on Vast, clones the narrator from your sample, and delivers the edited video in Telegram. AI image and video review is disabled. Saved media receives technical file checks.
+Send a title or tap **Generate** in Telegram. Choose 2, 5, or 10 minutes, or enter a custom duration, then select background music. The bot plans a complete Hindi story, creates illustrated scenes and motion on Vast, uses the bundled approved narrator reference, and delivers the edited video in Telegram. AI image and video review is disabled. Saved media receives technical file checks.
 
 ## Get started
 
 1. Clone this repository and open the folder in Codex.
 2. Say **onboarding**. Choose **Railway** or **localhost**.
-3. Follow the [step-by-step onboarding guide](ONBOARDING.md) and use the [environment template](.env.raghu.example). Install your intro and disclaimer, then install the shared Web 6 narrator file from the course materials.
+3. Follow the [step-by-step onboarding guide](ONBOARDING.md) and enter your credentials using the [environment template](.env.raghu.example). Music, previews, the narrator reference and intro/disclaimer are already included and work automatically on both hosts.
 
 Both hosts run the same production code and use a rented Vast GPU. Use `/setup` before your first run and `/status` to recover a paused job.
 
 Normal Telegram requests use **full generation**, with `RAGHU_PLAN_ONLY=false`:
-choose duration → choose one of two scripts → scene prompts and reference images →
+choose duration → preview and choose music → choose one of two scripts → scene prompts and reference images →
 GPU motion and narrator generation → verified asset collection → editing and delivery.
 The normal workflow does not stop after planning. `ALLOW_PAID_GENERATION` stays `false`
 in a fresh environment until onboarding is complete and the owner enables paid work.
@@ -70,8 +70,10 @@ Obsidian track are disabled. Output keeps narration/dialogue only until you set
 at a moderate level, gently lowered under speech. Legacy `BGM_FILE` and sound cue
 tags cannot restore the old background sounds. No sound-analysis API calls occur.
 
-With the four course tracks installed privately, Telegram sends short previews after
+With the four included course tracks, Telegram sends short previews after
 duration selection and asks which music to use for that production. Use `/music` to
 hear the previews again while choosing. Character dialogue is reported by the same
 narrator throughout; no character voice generator is used. Narration keeps its natural
-pace at the approved 0.765 gain. See [music installation](ONBOARDING.md#raw-audio-and-optional-music).
+pace at the approved 0.765 gain. All four tracks/previews, the narrator reference and
+intro/disclaimer ship with the repo (about 22 MB); only API credentials are supplied
+during onboarding. See [included music](ONBOARDING.md#raw-audio-and-optional-music).
