@@ -56,6 +56,7 @@ def text_fields(item, keys):
 def ask(model, prompt, check, tokens, *, attempts=3):
     feedback = ""
     for attempt in range(attempts):
+        result = None
         try:
             raw = model.complete(prompt + feedback, max_tokens=tokens, temperature=0)
         except Exception as error:
@@ -71,6 +72,15 @@ def ask(model, prompt, check, tokens, *, attempts=3):
                 raise ValueError(str(error)) from None
             feedback = (f"\nPrevious response failed validation: {error}. "
                         f"Correction attempt {attempt + 1}. Return the entire corrected JSON object.")
+            # Repair the actual rejected structure, rather than asking for an
+            # unrelated new draft from the title again. Never pad/drop speech here.
+            if isinstance(result, dict) and isinstance(result.get('speech'), list):
+                feedback += (
+                    '\nRepair this draft while retaining its story, chronological order and complete ending. '
+                    'Re-segment the spoken content into the exact requested beat count; do not add '
+                    'empty placeholders or silently discard the ending. Each beat must still be '
+                    'one short filmable event. Recount the array before returning JSON.'
+                    '\nRejected JSON draft:\n' + json.dumps(result, ensure_ascii=False))
     raise ValueError("At least one writing attempt is required")
 
 
@@ -93,7 +103,8 @@ def check_story(story, count, low, high, *, editorial_margin=False, editorial_ch
     if len(tags) != len(cast) or not all(CHAR_TAG.fullmatch(tag) for tag in tags):
         raise ValueError("Character tags must be unique and follow @CHAR-01-NAME")
     if not isinstance(speech, list) or len(speech) != count:
-        raise ValueError(f"Expected exactly {count} ordered speech beats")
+        actual = len(speech) if isinstance(speech, list) else 'a non-list value'
+        raise ValueError(f"Expected exactly {count} ordered speech beats; received {actual}")
     for beat in speech:
         fields(beat, ("speaker", "line"))
         text_fields(beat, ("speaker", "line"))
