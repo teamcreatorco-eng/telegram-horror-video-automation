@@ -371,6 +371,10 @@ def startup_cleanup():
             continue
         destroy(journal)
 
+class VastRemoteCommandFailed(RuntimeError):
+    """SSH connected and the remote command returned a failure status."""
+
+
 class VastConnectionLost(RuntimeError):
     """SSH transport failed before it could report the remote command result."""
 
@@ -453,6 +457,8 @@ class Remote:
                     reason = ssh_failure(errors.read(16384).decode("utf-8", errors="replace"))
                     raise VastConnectionLost(reason)
                 if process.returncode:
+                    if program == "ssh":
+                        raise VastRemoteCommandFailed(f"Vast worker command exited with status {process.returncode}.")
                     raise RuntimeError(f"Vast {program} operation failed.")
             finally:
                 if process.poll() is None:

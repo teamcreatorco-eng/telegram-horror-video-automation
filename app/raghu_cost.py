@@ -165,6 +165,8 @@ def record_rental_cost(folder, catalog_path, now):
     # Retract the old observation before parsing: corrupt or partial resumed logs
     # must not leave a previous fast qualification in circulation.
     catalog_file.unlink(missing_ok=True)
+    if not (folder / 'events.jsonl').is_file():
+        return None
     rows = [json.loads(line) for line in (folder / 'events.jsonl').read_text(encoding='utf-8').splitlines() if line.strip()]
     missing_time = any(row.get('time') is None for row in rows if row.get('stage') in ('video_model_ready','video_start','video_done'))
     rows = [row for row in rows if row.get('time') is not None and number(row['time']) >= state['started']]

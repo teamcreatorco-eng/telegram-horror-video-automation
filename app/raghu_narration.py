@@ -11,6 +11,7 @@ from pathlib import Path
 
 from . import media, store, bundled_media
 from .narration_layout import VERSION, request_key
+from .raghu_vast import VastRemoteCommandFailed
 
 VOICE = "hi-IN-MadhurNeural"
 
@@ -142,8 +143,27 @@ def produce_clone(remote, folder, shots, check, progress, assets):
                      Path(__file__).with_name("narration_layout.py")])
     progress("Generating continuous Hindi narration with natural sentence pauses", 52)
     # Paragraph checkpoints are retained remotely; retry alignment without resynthesizing speech.
-    remote.phase("bash worker.sh voice narrator-input.json >results/narrator.log 2>&1",
-                 600 + 30 * len(shots))
+    try:
+        remote.phase("bash worker.sh voice narrator-input.json >results/narrator.log 2>&1",
+                     600 + 30 * len(shots))
+    except VastRemoteCommandFailed as exc:
+        message = f"Hindi narration worker failed. {exc}"
+        try:
+            remote.pull(["narrator.log"], folder)
+            with (folder / "narrator.log").open("rb") as log:
+                log.seek(max(0, log.seek(0, 2) - 8192))
+                tail = log.read().decode("utf-8", errors="replace").lower()
+            # Only send known categories to Telegram. Raw provider logs can contain secrets.
+            if "valueerror: narration" in tail and "timestamp" in tail:
+                message = "Hindi narration timing could not be matched to the script. Saved paragraphs can be reused."
+            elif "out of memory" in tail:
+                message = "The narration worker ran out of memory."
+            elif "no space left on device" in tail:
+                message = "The Vast disk filled up during narration."
+            message += " Details saved in narrator.log."
+        except (RuntimeError, TimeoutError, OSError):
+            pass
+        raise RuntimeError(message) from exc
     files = [f"narration-{s['id']}.wav" for s in shots if narrator_line(s)]
     remote.pull([*files, "narration-master.wav"], output, subdir=directory)
     if any(not readable_voice(output / name) for name in [*files, "narration-master.wav"]):

@@ -107,3 +107,12 @@ def test_preexisting_contract_does_not_inherit_attempted_offer(monkeypatch,tmp_p
     assert run()==77
     assert state['host_signature'] is None
     assert state.get('offer_id') is None and 'cost_projection' not in state
+
+
+def test_absent_events_retracts_stale_cost_sample_without_a_cleanup_error(tmp_path):
+    prepare(tmp_path)
+    catalog = tmp_path / 'catalog'
+    cost.record_rental_cost(tmp_path, catalog, 101)
+    (tmp_path / 'events.jsonl').unlink()
+    assert cost.record_rental_cost(tmp_path, catalog, 102) is None
+    assert cost.load_observations(catalog) == []

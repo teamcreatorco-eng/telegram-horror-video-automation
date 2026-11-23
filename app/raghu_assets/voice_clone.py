@@ -76,7 +76,13 @@ def main():
                   duration=len(wav) / model.sr, lines=[line["id"] for line in group])
         duration = len(wav) / model.sr
         def transcribe():
-            segments, _ = aligner.transcribe(str(target), language="hi", word_timestamps=True,
+            # Whisper array input is mono 16 kHz. Keep the mastered WAV at its native rate.
+            from math import gcd
+            from scipy.signal import resample_poly
+            factor = gcd(model.sr, 16000)
+            samples = resample_poly(wav, 16000 // factor, model.sr // factor).astype(np.float32, copy=False)
+            segments, _ = aligner.transcribe(samples, language="hi", word_timestamps=True,
+                                             initial_prompt=" ".join(line["text"] for line in group),
                                              vad_filter=False, beam_size=5, condition_on_previous_text=False)
             return [dict(word=w.word, start=w.start, end=w.end) for segment in segments for w in segment.words or []]
         local = aligned_spans(words_file, group, duration, transcribe)

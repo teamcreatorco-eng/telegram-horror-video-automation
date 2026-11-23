@@ -177,3 +177,33 @@ def test_continuous_job_sends_full_script_and_pulls_completion_last(tmp_path, mo
     assert pulls[-1] == ['narration-timing.json']
     assert raghu_narration.pending_clone(folder, shots) == []
     raghu_narration.produce_clone(None, folder, shots, lambda: None, lambda *_: None, raghu_pipeline.ASSETS)
+
+@pytest.mark.parametrize("disconnected", [False, True])
+def test_narration_reports_worker_failure_separately_from_disconnect(tmp_path, monkeypatch, disconnected):
+    from app.raghu_vast import VastConnectionLost, VastRemoteCommandFailed
+    folder = tmp_path / ("b" * 32)
+    folder.mkdir()
+    reference = tmp_path / "ref.wav"
+    reference.write_bytes(b"stub")
+    shots = [{"id": "001", "narration": "वह रुका।"}]
+    monkeypatch.setattr(raghu_narration, "pending_clone", lambda *_: shots)
+    monkeypatch.setattr(raghu_narration, "clone_reference", lambda: reference)
+
+    class Remote:
+        def push(self, files):
+            pass
+
+        def phase(self, command, timeout):
+            if disconnected:
+                raise VastConnectionLost("connection reset")
+            raise VastRemoteCommandFailed("exit 1")
+
+        def pull(self, names, destination):
+            assert not disconnected and names == ["narrator.log"]
+            (destination / names[0]).write_text("private-log-content\nValueError: Narration word timestamps do not match the script.")
+
+    error = VastConnectionLost if disconnected else RuntimeError
+    message = "connection reset" if disconnected else "timing could not be matched"
+    with pytest.raises(error, match=message) as caught:
+        raghu_narration.produce_clone(Remote(), folder, shots, lambda: None, lambda *_: None, raghu_pipeline.ASSETS)
+    assert "private-log-content" not in str(caught.value)
