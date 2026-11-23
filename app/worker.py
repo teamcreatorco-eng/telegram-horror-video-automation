@@ -31,7 +31,9 @@ def execute(claimed):
         while not stop.wait(10):
             try:
                 changed=connection.execute("UPDATE jobs SET heartbeat=%s WHERE id=%s AND worker=%s AND status='running'",(time.time(),ident,token)).rowcount
-                if not changed:break
+                if not changed:
+                    lost.set()
+                    break
             except Exception:lost.set();break
     thread=threading.Thread(target=heartbeat,daemon=True);thread.start()
     try:
@@ -45,10 +47,15 @@ def execute(claimed):
             # Private object uploads completed before the job was marked complete.
             root=store.folder(ident).resolve()
             if root.parent!=store.DATA.resolve() or root.name!=ident:raise ValueError('Invalid worker cache path')
-            shutil.rmtree(root)
+            try:
+                shutil.rmtree(root)
+            except OSError:
+                logging.warning('Completed film retained in storage; local cache cleanup deferred: %s', ident)
     except Exception:
         logging.exception('Worker failed before production: %s',ident)
-        store.update(ident,status='failed',stage='Worker recovery required',error='Could not load saved assets. Resume after checking storage availability.')
+        with store.db() as c:
+            c.execute("UPDATE jobs SET status='failed',stage=?,error=? WHERE id=? AND worker=? AND status='running'",
+                      ('Worker recovery required','Could not load saved assets. Resume after checking storage availability.',ident,token))
     finally:
         stop.set();thread.join(timeout=15);connection.close()
 

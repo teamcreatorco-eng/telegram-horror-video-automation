@@ -29,13 +29,14 @@ def create(request, owner='admin',ident=None):
         existing=c.execute('SELECT owner FROM jobs WHERE id=?',(ident,)).fetchone()
         if existing:
             if existing[0]!=owner:raise ValueError('Job identity conflict')
+            folder(ident).mkdir(parents=True, exist_ok=True)
             return ident
         count=c.execute("SELECT COUNT(*) FROM jobs WHERE owner=? AND status IN ('running','queued')",(owner,)).fetchone()[0]
         if count>=int(os.getenv('MAX_JOBS_PER_USER','3')): raise ValueError('You already have three active productions. Wait for one to finish.')
         if database.postgres() and c.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('running','queued')").fetchone()[0]>=int(os.getenv('MAX_QUEUED_JOBS','10000')):raise ValueError('The production queue is full. Please retry later.')
         c.execute('INSERT INTO jobs (id,request,status,stage,progress,error,created,cancel,owner) VALUES (?,?,?,?,?,?,?,?,?)',(ident,json.dumps(request,ensure_ascii=False),'queued','Waiting for worker',0,None,datetime.now(timezone.utc).isoformat(),0,owner))
         c.execute('UPDATE jobs SET enqueued=? WHERE id=?',(time.time(),ident))
-    folder(ident).mkdir(parents=True)
+        folder(ident).mkdir(parents=True, exist_ok=True)
     return ident
 
 def folder(ident):
@@ -67,8 +68,12 @@ def all_jobs(owner=None):
     return result
 
 def save(path, value):
-    tmp=path.with_suffix(path.suffix+'.tmp')
-    tmp.write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf-8'); tmp.replace(path)
+    tmp=path.with_name(f'{path.name}.{uuid.uuid4().hex}.tmp')
+    try:
+        tmp.write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf-8')
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
     from . import storage
     storage.publish_path(path)
 

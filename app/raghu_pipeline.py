@@ -884,8 +884,12 @@ def generate(folder, ident, shot_plan, check, progress):
                 if (folder / "vast-preserve-and-replace.json").is_file():
                     raise
                 remote.pause_and_restart(progress_at, phase)
-            except Exception:
-                remote.stop_for_recovery()
+            except Exception as original:
+                try:
+                    remote.stop_for_recovery()
+                except Exception:
+                    logging.exception("Could not confirm Vast stop after production failure")
+                    original.add_note("Vast stop was not confirmed. Check the rental in Vast.")
                 raise
 
 
@@ -951,6 +955,14 @@ def generate_on_rental(remote, folder, canonical, starts, shots, successors, app
     animate_stills(remote, folder, missing, successors, check, progress)
 
 
+def collect_motion_events(remote, folder):
+    # The cost reporter reads this snapshot. The render queue verifies the actual clips.
+    try:
+        remote.pull(["events.jsonl"], folder)
+    except (RuntimeError, TimeoutError, OSError):
+        logging.warning("Motion telemetry unavailable; continuing production")
+
+
 def animate_stills(remote, folder, missing, successors, check, progress):
     approved = [folder / still_file(s) for s in missing]
     for i in range(0, len(approved), 12):
@@ -963,19 +975,14 @@ def animate_stills(remote, folder, missing, successors, check, progress):
     progress(f"Preparing {model_name} motion weights", 54)
     remote.start_motion_setup()
     remote.wait_motion_setup()
-    remote.pull(["events.jsonl"], folder)
-    for line in (folder / "events.jsonl").read_text(encoding="utf-8").splitlines():
-        event = json.loads(line)
-        if event["stage"] == "model_download":
-            logging.warning("%s download %s: %s bytes in %.1fs", model_name,
-                            event["file"], event["bytes"], event["seconds"])
+    collect_motion_events(remote, folder)
     progress(f"Animating the starting images with {model_name}", 56)
     # Old queue manifests are history, not new work for a restarted watch process.
     remote.push([ASSETS/'motion_recovery.py'])
     remote.phase('python motion_recovery.py --park',60)
     remote.phase("{ nohup env RAGHU_WATCH=1 bash worker.sh motion >results/motion.log 2>&1 </dev/null & echo $! > motion.pid; }", 30)
     blocked = render_motion_queue(remote, folder, missing, successors, check, progress)
-    remote.pull(["events.jsonl"], folder)
+    collect_motion_events(remote, folder)
     if blocked:
         raise RenderReviewNeedsRetake("Motion review blocked final editing after targeted retakes: " + "; ".join(blocked[:6]))
     preserve = (folder / "vast-preserve-and-replace.json").is_file()

@@ -259,12 +259,17 @@ def finish_rental(journal, preserve):
             # Old recovery markers must not keep a completed rental billed for disk.
             destroy(journal)
         else:
-            close_rental(journal, preserve)
+            # A connected worker can already contain paid, unfinished assets.
+            preserve_work = original is not None and store.read(journal).get("ssh_ready_seconds") is not None
+            close_rental(journal, preserve or preserve_work)
     except Exception as cleanup_error:
         if original is None:
             raise
-        state = store.read(journal)
-        store.save(journal, {**state, "cleanup_error": str(cleanup_error), "original_error": str(original)})
+        try:
+            state = store.read(journal)
+            store.save(journal, {**state, "cleanup_error": str(cleanup_error), "original_error": str(original)})
+        except Exception:
+            logging.exception("Could not save the rental cleanup error")
         logging.exception("Rental cleanup also failed; preserving original production error")
         original.add_note("Rental cleanup also failed: " + str(cleanup_error))
 
@@ -357,19 +362,30 @@ def destroy(journal):
 
 def startup_cleanup():
     for journal in store.DATA.glob("*/raghu-rental.json"):
-        state = store.read(journal)
-        if state.get("destroyed"):
-            continue
-        if state.get("recovery_stop") or (journal.parent / "vast-preserve-and-replace.json").is_file():
-            if not state.get("recovery_stop"):
+        ident = journal.parent.name
+        try:
+            job = store.get(ident)
+            if job and job['status'] in ('running', 'queued'):
+                continue  # Another worker may own this rental.
+            state = store.read(journal)
+            if state.get("destroyed"):
+                continue
+            if not job or job['status'] != 'complete' or state.get('recovery_stop') or (
+                journal.parent / "vast-preserve-and-replace.json"
+            ).is_file():
                 close_rental(journal, preserve=True)
             else:
-                row = next((r for r in instances() if r["id"] == state.get("id")
-                            or r.get("label") == state["label"]), None)
-                if row and not (instance_stopped(row) or stopped_failed_start(row)):
-                    request_instance_state("stop", row["id"])
-            continue
-        destroy(journal)
+                destroy(journal)
+        except Exception:
+            logging.exception("Rental cleanup unconfirmed for job %s; check the instance in Vast", ident)
+            try:
+                with store.db() as c:
+                    c.execute("UPDATE jobs SET stage=?,error=? WHERE id=? AND status IN ('paused','failed')",
+                              ('Rental cleanup needs attention',
+                               'Could not confirm the rental stopped. Check its billing status in Vast before retrying.',ident))
+            except Exception:
+                logging.exception("Could not save rental cleanup status for job %s", ident)
+
 
 class VastRemoteCommandFailed(RuntimeError):
     """SSH connected and the remote command returned a failure status."""
@@ -722,9 +738,14 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
             failed = store.read(path)
             startup_spent += float(failed["rate"]) * max(
                 60, failed.get("stop_confirmed_at", time.time()) - failed["started"]) / 3600
+    if (previous.get("id") and previous.get("ssh_ready_seconds") is not None
+            and not previous.get("destroyed") and not previous.get("recovery_stop") and not replace_failed_host):
+        # A controller crash can leave no stop marker after model downloads started.
+        close_rental(journal, preserve=True)
+        previous = store.read(journal)
     if resume_seconds and not previous.get("recovery_stop"):
         raise RuntimeError("No stopped Vast rental is available for this saved-frame continuation.")
-    if previous.get("recovery_stop") and previous.get("id") and not replace_failed_host:
+    if previous.get("recovery_stop") and previous.get("id") and not previous.get("destroyed") and not replace_failed_host:
         if previous.get("motion_model", "ltx") != model:
             raise RuntimeError("The preserved rental uses a different motion model. Its disk is still saved. "
                                "Start a new Telegram production to use the deployed model.")

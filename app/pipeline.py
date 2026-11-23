@@ -195,8 +195,14 @@ def work(ident,lease=None):
             store.update(ident,status='failed',stage=f'Needs attention · {current_stage}' if os.getenv('MEDIA_BACKEND', '').lower() == 'raghu' else 'Needs attention',error=message[:2400])
     finally:
         try:
-            if not lease or (not lease[1].is_set() and store.get(ident)['worker']==lease[0]):storage.sync(ident)
-        except Exception:store.update(ident,status='failed',stage='Storage sync interrupted',error='Some artifacts could not be uploaded. Retry with storage available.')
+            # Completion already synced every output in progress(..., 100).
+            job = store.get(ident)
+            if job and job['status'] != 'complete' and (not lease or (
+                    not lease[1].is_set() and job['worker'] == lease[0])):
+                storage.sync(ident)
+        except Exception:
+            logging.exception("Final checkpoint sync interrupted for job %s; retaining local files", ident)
+            # Preserve the primary failure and script-choice/cancellation state.
         with lock: active.discard(ident)
 
 

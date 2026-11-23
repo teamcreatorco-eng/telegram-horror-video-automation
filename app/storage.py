@@ -1,5 +1,5 @@
 """Private object storage shared by web replicas and workers. No tenant-supplied paths."""
-import os,hashlib,json,mimetypes
+import os,hashlib,json,mimetypes,uuid
 from pathlib import Path
 from functools import lru_cache
 
@@ -14,6 +14,11 @@ def records(ident):
     from . import store
     with store.db() as c:return [dict(r) for r in c.execute('SELECT * FROM artifacts WHERE job_id=?',(ident,))]
 
+def file_digest(path):
+    with path.open('rb') as stream:
+        return hashlib.file_digest(stream,'sha256').hexdigest()
+
+
 def publish_path(path):
     from . import store
     if not enabled():return
@@ -26,7 +31,7 @@ def publish_path(path):
     if not job:return
     name='/'.join(relative.parts[1:])
     if not path.is_file() or path.suffix in ('.tmp',):return
-    digest=hashlib.sha256(path.read_bytes()).hexdigest()
+    digest=file_digest(path)
     with store.db() as c: old=c.execute('SELECT digest FROM artifacts WHERE job_id=? AND name=?',(ident,name)).fetchone()
     if old and old[0]==digest:return
     tenant=hashlib.sha256(job['owner'].encode()).hexdigest()
@@ -47,9 +52,16 @@ def hydrate(ident):
     for record in records(ident):
         path=(root/record['name']).resolve()
         if not path.is_relative_to(root):raise ValueError('Invalid saved artifact path')
-        if path.exists() and hashlib.sha256(path.read_bytes()).hexdigest()==record['digest']:continue
+        if path.exists() and file_digest(path)==record['digest']:continue
         path.parent.mkdir(parents=True,exist_ok=True)
-        client().download_file(os.environ['S3_BUCKET'],record['object_key'],str(path))
+        partial=path.with_name(f'{path.name}.{uuid.uuid4().hex}.tmp')
+        try:
+            client().download_file(os.environ['S3_BUCKET'],record['object_key'],str(partial))
+            if file_digest(partial) != record['digest']:
+                raise RuntimeError(f"Saved asset failed its checksum: {record['name']}")
+            partial.replace(path)
+        finally:
+            partial.unlink(missing_ok=True)
 
 def read_json(ident,name):
     from . import store
