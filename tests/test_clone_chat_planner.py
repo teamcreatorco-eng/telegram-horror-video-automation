@@ -121,11 +121,12 @@ def test_two_minute_story_allows_a_small_overage_when_each_beat_fits(lengths, ex
 
 
 @pytest.mark.parametrize('semantic_flag', [False, True])
-def test_production_planner_accepts_83_words_without_any_review_call(tmp_path, semantic_flag):
+@pytest.mark.parametrize('beat_count', [5, 6, 7])
+def test_production_planner_accepts_83_words_without_any_review_call(tmp_path, semantic_flag, beat_count):
     writer = adapter.planning_writer
     story = {"entity": "परछाईं", "characters": [{"tag": "@CHAR-01-BABLI", "name": "बबली"}],
              "speech": [{"speaker": "NARRATOR", "line": " ".join(["छाया"] * n)}
-                        for n in [14, 14, 14, 14, 14, 13]]}
+                        for n in ([14, 14, 14, 14, 14, 13] if beat_count == 6 else [13]*beat_count)]}
     assets = {"characters": [{**story["characters"][0], "look_summary": "Woman in blue", "voice_description": "Hindi woman"}],
               "backgrounds": [{"tag": "#BGD-01-ROOM", "location_name": "कमरा", "look_summary": "An empty room"}]}
     shots = {"scenes": [{"scene_number": i, "title": "कमरा", "sound_design": "Quiet room",
@@ -135,7 +136,7 @@ def test_production_planner_accepts_83_words_without_any_review_call(tmp_path, s
                              "offscreen": [], "objects": [], "static_surfaces": [],
                              "action": {"kind": "establishing", "actor": None, "target": None,
                                         "movement": "holds the composition", "reveal_face": False}}}
-                        for i in range(1, 7)]}
+                        for i in range(1, beat_count+1)]}
     if semantic_flag:
         # A semantic concern must not launch record reviews/repairs or reject production.
         shots['scenes'][0]['scene_record']['visible'][0]['face_visible'] = False
@@ -156,8 +157,11 @@ def test_production_planner_accepts_83_words_without_any_review_call(tmp_path, s
     from app.youtube_clone.pipeline.visual_composition import SHOT_RULES
     assert SHOT_RULES in model.calls[0]
     assert SHOT_RULES in model.calls[2]
-    assert project["script"]["word_count"] == 83
-    assert len(project["scenes"]) == 6
+    assert project["script"]["word_count"] == (83 if beat_count==6 else 13*beat_count)
+    assert len(project["scenes"]) == beat_count
+    rendered, preview = adapter.project_for_renderer(project, 30)
+    assert len(rendered['shots']) == beat_count
+    assert len(preview['shots']) == beat_count
     assert project["planning_review"] == []
 
 

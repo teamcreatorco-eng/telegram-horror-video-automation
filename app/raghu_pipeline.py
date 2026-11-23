@@ -1335,7 +1335,7 @@ def saved_production_plan(folder):
     seconds = saved.get("seconds")
     if type(seconds) is not int or not 30 <= seconds <= 600 or seconds % 5:
         raise RuntimeError("The approved storyboard has an invalid duration.")
-    if not saved.get("script") or len(saved.get("shots", [])) != seconds // 5:
+    if not saved.get("script") or not isinstance(saved.get('shots'), list) or not saved['shots']:
         raise RuntimeError("The approved script and storyboard checkpoint is incomplete.")
     return saved
 

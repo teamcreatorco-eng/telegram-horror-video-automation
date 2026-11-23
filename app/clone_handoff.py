@@ -54,8 +54,9 @@ def project(plan, source_hash, *, seconds=60):
     """Build separately inspectable FLUX/LTX requests from the locked source."""
     scenes = plan["scenes"]
     if (not 30 <= seconds <= 600 or seconds % 5 or plan["schema_version"] != "1.0.0"
-            or plan["script"]["duration_minutes"] != seconds / 60 or len(scenes) != seconds // 5):
-        raise ValueError(f"Expected a {seconds}-second pipeline v1.0.0 plan with {seconds // 5} scenes")
+            or plan["script"]["duration_minutes"] != seconds / 60
+            or not isinstance(scenes, list) or not scenes):
+        raise ValueError(f"Expected a {seconds}-second pipeline v1.0.0 plan with a non-empty scene list")
     characters = _assets(plan["characters"], r"@CHAR-\d+[-A-Z0-9]+")
     backgrounds = _assets(plan["backgrounds"], r"#BGD-\d+[-A-Z0-9]+")
     result = {"source_plan_sha256": source_hash, "production_ready": False,
