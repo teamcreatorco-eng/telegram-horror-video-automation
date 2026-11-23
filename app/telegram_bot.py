@@ -323,7 +323,13 @@ class Service:
             if not job:
                 self.api.text(cid, 'No matching production found.')
                 return
-            self.send_images(cid, job)
+            try:
+                self.send_images(cid, job)
+            except BotError:
+                raise
+            except Exception:
+                logging.exception("Could not read saved images for job %s", job['id'])
+                self.api.text(cid, 'Could not read the saved image archive. Check storage availability and retry /images.')
             return
         if raghu and command in ('/image_review', '/raghu_review_check'):
             self.api.text(cid, 'AI image and video reviews are disabled. Production continues after file checks.')
@@ -491,8 +497,13 @@ class Service:
             self.answer_callback({"callback_query_id": query['id'],
                           "text": "Script selected." if valid else "This choice is no longer available."})
             if valid:
-                script_options.select(store.folder(ident), int(number))
-                if pipeline.enqueue(ident):
+                try:
+                    script_options.select(store.folder(ident), int(number))
+                    queued = pipeline.enqueue(ident)
+                except ValueError as exc:
+                    self.api.text(cid, str(exc))
+                    return
+                if queued:
                     with store.db() as c:
                         c.execute("UPDATE telegram_jobs SET delivery='pending',last_text=NULL WHERE job_id=?", (ident,))
                     self.api.text(cid, f"Script {number} selected. Preparing its characters and scene prompts.")
@@ -601,22 +612,37 @@ class Service:
     def send_images(self, cid, job):
         folder = store.folder(job['id'])
         pattern = r'(?:rejected-)?(?:(?:still|end)-[0-9]{3}|character-[A-Z0-9-]{1,30}|background-[A-Z0-9-]{1,30}|smoke-image|review-check)\.png'
-        images = sorted(path for path in folder.glob('*.png') if path.is_file() and re.fullmatch(pattern, path.name))
+        hosted = storage.enabled()
+        records = {r['name']: r for r in storage.records(job['id'])} if hosted else {}
+        available = records.keys() if hosted else (p.name for p in folder.glob('*.png') if p.is_file())
+        images = sorted(name for name in available if re.fullmatch(pattern, name))
         if not images:
             self.api.text(cid, 'No images have been saved for this production yet.')
             return
-        with tempfile.TemporaryDirectory(prefix='raghu-images-') as directory:
+        with tempfile.TemporaryDirectory(prefix='raghu-images-') as temp:
+            directory = Path(temp)
             batch, size, part = [], 0, 1
-            for image in images:
-                report = image.with_suffix('.png.review.json')
-                files = [image, report] if report.is_file() else [image]
-                size_needed = sum(path.stat().st_size + 512 for path in files)
-                if batch and size + size_needed > 42_000_000:
-                    self.send_image_archive(cid, Path(directory), batch, part)
+            for name in images:
+                report = name + '.review.json'
+                has_report = report in records if hosted else (folder / report).is_file()
+                names = [name, report] if has_report else [name]
+                needed = sum((records[n]['size'] if hosted else (folder / n).stat().st_size) + 512 for n in names)
+                if batch and size + needed > 42_000_000:
+                    self.send_image_archive(cid, directory, batch, part)
+                    if hosted:
+                        for path in batch:
+                            path.unlink()
                     batch, size, part = [], 0, part + 1
-                batch.extend(files)
-                size += size_needed
-            self.send_image_archive(cid, Path(directory), batch, part)
+                for asset in names:
+                    path = folder / asset
+                    if hosted:
+                        path = directory / asset
+                        storage.client().download_file(os.environ['S3_BUCKET'], records[asset]['object_key'], str(path))
+                        if storage.file_digest(path) != records[asset]['digest']:
+                            raise RuntimeError('A saved image archive asset failed its checksum.')
+                    batch.append(path)
+                size += needed
+            self.send_image_archive(cid, directory, batch, part)
 
     def send_image_archive(self, cid, directory, files, part):
         target = directory / f'production-images-{part}.zip'
@@ -734,39 +760,40 @@ class Service:
             return
         with tempfile.TemporaryDirectory(prefix='nightfall-telegram-') as temp:
             video=Path(temp)/'film.mp4'
+            link = None
             if storage.enabled():
-                with store.db() as c:record=c.execute("SELECT object_key FROM artifacts WHERE job_id=? AND name='final.mp4'",(job['id'],)).fetchone()
-                if not record:raise RuntimeError('Final film is not available in storage')
-                storage.client().download_file(os.environ['S3_BUCKET'],record[0],str(video))
+                with store.db() as c:
+                    record = c.execute("SELECT object_key,size FROM artifacts WHERE job_id=? AND name='final.mp4'",
+                                       (job['id'],)).fetchone()
+                if not record:
+                    raise RuntimeError('Final film is not available in storage')
+                if record['size'] > 48_000_000:
+                    link = storage.client().generate_presigned_url('get_object',
+                        Params={'Bucket': os.environ['S3_BUCKET'], 'Key': record['object_key']}, ExpiresIn=86400)
+                else:
+                    storage.client().download_file(os.environ['S3_BUCKET'],record['object_key'],str(video))
             else:
-                import shutil
-                shutil.copyfile(store.folder(job['id'])/'final.mp4',video)
-            if video.stat().st_size>48_000_000:
-                if storage.enabled():
-                    with store.db() as c:
-                        c.execute("UPDATE telegram_jobs SET delivery='sending' WHERE job_id=?", (job['id'],))
-                    url = storage.client().generate_presigned_url('get_object',
-                        Params={'Bucket': os.environ['S3_BUCKET'], 'Key': record[0]}, ExpiresIn=86400)
-                    result = self.api.text(row['chat_id'], 'Your full-quality video is ready. Download link expires in 24 hours.\n' + url)
-                    with store.db() as c:
-                        c.execute("UPDATE telegram_jobs SET delivery='sent',video_message=? WHERE job_id=?", (result['message_id'],job['id']))
-                        c.execute("INSERT INTO telegram_reviews(job_id) VALUES (?) ON CONFLICT(job_id) DO NOTHING",(job['id'],))
-                    self.ask_for_review(row,job)
-                    return
+                video = store.folder(job['id']) / 'final.mp4'
+            if not link and video.stat().st_size>48_000_000:
                 compressed=Path(temp)/'telegram.mp4'
                 media.ff('-i',video,'-c:v','libx264','-preset','fast','-b:v',str(max(160, min(3500, int(355000/media.duration(video))-128)))+'k','-maxrate','4000k','-bufsize','8000k','-c:a','aac','-b:a','128k','-movflags','+faststart',compressed)
                 video=compressed
-            if video.stat().st_size>48_000_000:raise RuntimeError('Film exceeds the Telegram upload budget after compression')
-            with store.db() as c:c.execute("UPDATE telegram_jobs SET delivery='sending' WHERE job_id=?",(job['id'],))
-            try:
+            if not link and video.stat().st_size>48_000_000:raise RuntimeError('Film exceeds the Telegram upload budget after compression')
+            if not link:
                 story = storage.read_json(job['id'], 'story.json') if job['request'].get('choose_topic') else None
                 title = story.get('title', job['request']['title']) if story else job['request']['title']
-                with video.open('rb') as stream:result=self.api.call('sendVideo',{'chat_id':row['chat_id'],'caption':title+('\nSix acts' if os.getenv('MEDIA_BACKEND', '').lower() == 'raghu' else '\nSix acts · 16:9')+ ('\nDEMO: test cards, no AI footage.' if job['request']['mode']=='demo' else ''),'supports_streaming':'true'},files={'video':('film.mp4',stream,'video/mp4')})
+            with store.db() as c:c.execute("UPDATE telegram_jobs SET delivery='sending' WHERE job_id=?",(job['id'],))
+            try:
+                if link:
+                    result = self.api.text(row['chat_id'], 'Your full-quality video is ready. Download link expires in 24 hours.\n' + link)
+                else:
+                    with video.open('rb') as stream:result=self.api.call('sendVideo',{'chat_id':row['chat_id'],'caption':title+('\nSix acts' if os.getenv('MEDIA_BACKEND', '').lower() == 'raghu' else '\nSix acts · 16:9')+ ('\nDEMO: test cards, no AI footage.' if job['request']['mode']=='demo' else ''),'supports_streaming':'true'},files={'video':('film.mp4',stream,'video/mp4')})
             except BotError as exc:
                 with store.db() as c:c.execute('UPDATE telegram_jobs SET delivery=? WHERE job_id=?',('sending' if exc.uncertain else 'pending',job['id']))
                 raise
-            with store.db() as c:c.execute("UPDATE telegram_jobs SET delivery='sent',video_message=? WHERE job_id=?",(result['message_id'],job['id']))
-            with store.db() as c:c.execute("INSERT INTO telegram_reviews(job_id) VALUES (?) ON CONFLICT(job_id) DO NOTHING",(job['id'],))
+            with store.db() as c:
+                c.execute("UPDATE telegram_jobs SET delivery='sent',video_message=? WHERE job_id=?",(result['message_id'],job['id']))
+                c.execute("INSERT INTO telegram_reviews(job_id) VALUES (?) ON CONFLICT(job_id) DO NOTHING",(job['id'],))
             self.ask_for_review(row,job)
 
     def ask_for_review(self,row,job):

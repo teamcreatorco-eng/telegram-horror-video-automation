@@ -15,7 +15,7 @@ class Cancelled(Exception): pass
 PLANNING_BUDGET_ERROR = "DeepSeek planning reached its request budget"
 MAX_PLANNING_RESUMES = 2
 
-def schedule_safe_provider_retry(ident, folder, message):
+def schedule_safe_provider_retry(ident, folder, message, *, expected_worker=None):
     """Retry only requests Replicate definitively rejected before creating a prediction."""
     journals=list(folder.glob('*.operation.json'))
     safe=any(store.read(path).get('retry_safe') for path in journals)
@@ -24,8 +24,7 @@ def schedule_safe_provider_retry(ident, folder, message):
     maximum=int(os.getenv('REPLICATE_SAFE_RETRY_LIMIT','3'))
     if attempts>=maximum:return False
     delay=int(os.getenv('REPLICATE_SAFE_RETRY_DELAY_SECONDS','900'))*(2**attempts)
-    store.update(ident,status='queued',stage='Waiting to retry a rejected Replicate request',error=message[:2400],retry_count=attempts+1,retry_at=time.time()+delay,enqueued=time.time())
-    return True
+    return bool(store.update(ident,expected_worker=expected_worker,status='queued',stage='Waiting to retry a rejected Replicate request',error=message[:2400],retry_count=attempts+1,retry_at=time.time()+delay,enqueued=time.time()))
 
 def planning_resume_count(job, resume_planning):
     count = job['planning_resumes']
@@ -56,13 +55,25 @@ def enqueue(ident, *, resume_planning=False):
         job = store.get(ident)
         if not job: return False
         planning_resumes = planning_resume_count(job, resume_planning)
-        active.add(ident)
         store.update(ident,status='queued',cancel=0,error=None,planning_resumes=planning_resumes)
-        pool.submit(work,ident)
+        active.add(ident)
+        try:
+            pool.submit(work,ident)
+        except Exception:
+            active.discard(ident)
+            store.update(ident,status='paused',stage='Local worker could not start. Restart the controller and retry.')
+            raise
     return True
 
 def work(ident,lease=None):
-    folder=store.folder(ident); job=store.get(ident); request=job['request']; demo=request['mode']=='demo'
+    folder=store.folder(ident)
+    worker_token = lease[0] if lease else None
+    def record(**fields):
+        if lease and lease[1].is_set():
+            raise Cancelled()
+        if not store.update(ident, expected_worker=worker_token, **fields):
+            raise Cancelled()
+
     def check():
         current=store.get(ident)
         if lease and (lease[1].is_set() or current['worker']!=lease[0]):raise Cancelled()
@@ -71,8 +82,9 @@ def work(ident,lease=None):
     def progress(stage,percent):
         nonlocal current_stage
         current_stage = stage
-        check(); storage.sync(ident);store.update(ident,status='running',stage=stage,progress=percent)
+        check(); storage.sync(ident);record(status='running',stage=stage,progress=percent)
     try:
+        job=store.get(ident); request=job['request']; demo=request['mode']=='demo'
         progress('Checking production tools',1)
         if not media.available(): raise RuntimeError('Install FFmpeg and FFprobe, then resume.')
         if not demo and os.getenv('MEDIA_BACKEND', '').lower() == 'raghu':
@@ -88,7 +100,7 @@ def work(ident,lease=None):
                     request = {**request, 'planning_resumes': job['planning_resumes']}
                 completion = raghu_pipeline.work(ident, folder, request, check, progress)
             progress(completion or 'Complete',100)
-            store.update(ident,status='complete')
+            record(status='complete')
             return
         provider=None
         if not demo:
@@ -178,12 +190,13 @@ def work(ident,lease=None):
         with zipfile.ZipFile(folder/'production-kit.zip','w',zipfile.ZIP_DEFLATED) as z:
             for path in folder.iterdir():
                 if path.suffix in {'.json','.png','.srt','.wav','.mp3','.mp4'} and '.operation.' not in path.name and not path.name.startswith(('clip-','raw-')) and path.name!='joined.mp4': z.write(path,path.name)
-        progress('Complete',100); store.update(ident,status='complete')
+        progress('Complete',100); record(status='complete')
     except AwaitingScriptChoice:
-        store.update(ident, status='awaiting_script', stage='Choose script 1 or 2 in Telegram',
+        record( status='awaiting_script', stage='Choose script 1 or 2 in Telegram',
                      progress=12, error=None)
     except Cancelled:
-        if not lease or store.get(ident)['worker']==lease[0]:store.update(ident,status='cancelled',stage='Stopped; saved assets can be resumed')
+        if not lease or not lease[1].is_set():
+            store.update(ident,expected_worker=worker_token,status='cancelled',stage='Stopped; saved assets can be resumed')
     except Exception as exc:
         # Never persist SDK request dumps or API credentials.
         message=str(exc)
@@ -191,8 +204,11 @@ def work(ident,lease=None):
             if secret: message=message.replace(secret,'[redacted]')
         if os.getenv("MEDIA_BACKEND", "").lower() == "raghu":
             logging.warning("Production %s stopped (%s): %s", ident, type(exc).__name__, message[:300])
-        if not schedule_safe_provider_retry(ident,folder,message):
-            store.update(ident,status='failed',stage=f'Needs attention · {current_stage}' if os.getenv('MEDIA_BACKEND', '').lower() == 'raghu' else 'Needs attention',error=message[:2400])
+        if lease and lease[1].is_set():
+            return
+        if os.getenv("MEDIA_BACKEND", "").lower() == "raghu" or not schedule_safe_provider_retry(
+                ident, folder, message, expected_worker=worker_token):
+            store.update(ident,expected_worker=worker_token,status='failed',stage=f'Needs attention · {current_stage}' if os.getenv('MEDIA_BACKEND', '').lower() == 'raghu' else 'Needs attention',error=message[:2400])
     finally:
         try:
             # Completion already synced every output in progress(..., 100).
@@ -203,7 +219,8 @@ def work(ident,lease=None):
         except Exception:
             logging.exception("Final checkpoint sync interrupted for job %s; retaining local files", ident)
             # Preserve the primary failure and script-choice/cancellation state.
-        with lock: active.discard(ident)
+        finally:
+            with lock: active.discard(ident)
 
 
 def regenerate(ident,number):

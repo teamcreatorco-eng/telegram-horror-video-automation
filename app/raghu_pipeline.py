@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -900,8 +901,7 @@ def generate_on_rental(remote, folder, canonical, starts, shots, successors, app
     if rejected:
         raise RenderReviewNeedsRetake("Character or location references still need correction: " + ", ".join(rejected))
     approved_canon = [folder / t["file"] for t in canonical]
-    remote.push(approved_canon)
-    remote.phase("mv character-*.png background-*.png results/", 40)
+    upload_saved_images(remote, approved_canon)
     progress("Generating scene starting images", 42)
     remote.image_download_progress = lambda message: progress(message, 42)
     rejected = review_stills(remote, folder, starts, check, lambda message: progress(message, 42))
@@ -963,11 +963,16 @@ def collect_motion_events(remote, folder):
         logging.warning("Motion telemetry unavailable; continuing production")
 
 
+def upload_saved_images(remote, files):
+    for index in range(0, len(files), 12):
+        batch = files[index:index + 12]
+        remote.push(batch)
+        remote.phase("mv -- " + shlex.join([path.name for path in batch]) + " results/", 60)
+
+
 def animate_stills(remote, folder, missing, successors, check, progress):
     approved = [folder / still_file(s) for s in missing]
-    for i in range(0, len(approved), 12):
-        remote.push(approved[i:i+12])
-    remote.phase("mv still-*.png results/", 60)
+    upload_saved_images(remote, approved)
     model = motion_model()
     if uses_ending_image():
         prepare_ending_frames(remote, folder, missing, successors, check, progress, approved)

@@ -110,3 +110,30 @@ def test_failure_after_ssh_connected_preserves_unmarked_disk(tmp_path, monkeypat
         finally:
             raghu_vast.finish_rental(journal, False)
     assert calls == [True]
+
+
+def test_uploads_only_this_batch_of_references(tmp_path):
+    calls = []
+    remote = SimpleNamespace(push=lambda paths: calls.append([p.name for p in paths]),
+                             phase=lambda cmd, seconds: calls.append(cmd))
+    raghu_pipeline.upload_saved_images(remote, [])
+    raghu_pipeline.upload_saved_images(remote, [tmp_path / "background-HALL.png"])
+    assert calls == [["background-HALL.png"], "mv -- background-HALL.png results/"]
+
+
+def test_displaced_worker_cannot_mark_reassigned_job_failed_or_cancelled(tmp_path, monkeypatch):
+    import threading
+    from app import pipeline
+    monkeypatch.setattr(store, "DATA", tmp_path)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("MEDIA_BACKEND", "raghu")
+    store.init()
+    ident = store.create({"mode":"live"})
+    store.update(ident, status="running", worker="first")
+    def take_over(_):
+        store.update(ident, worker="second", stage="On second worker")
+        raise RuntimeError("Old worker storage error")
+    monkeypatch.setattr(storage, "sync", take_over)
+    pipeline.work(ident, lease=("first", threading.Event()))
+    job = store.get(ident)
+    assert (job["worker"], job["status"], job["stage"], job["error"]) == ("second", "running", "On second worker", None)

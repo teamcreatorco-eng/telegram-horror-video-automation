@@ -480,3 +480,40 @@ def test_script_choices_owned_selection_and_full_delivery(service, monkeypatch):
     pick(101, 3)
     assert queued == [ident]
     assert store.get(ident)['script_choice'] == 2
+
+
+def test_hosted_large_video_retries_rate_limit_without_downloading(service, monkeypatch):
+    from types import SimpleNamespace
+    job = complete(service)
+    with store.db() as c:
+        c.execute("INSERT INTO artifacts VALUES (?,?,?,?,?)", (job["id"], "final.mp4", "fixture-key", "digest", 50_000_000))
+    monkeypatch.setenv("S3_BUCKET", "fixture")
+    monkeypatch.setattr(storage, "client", lambda: SimpleNamespace(generate_presigned_url=lambda *a, **kw: "signed-url"))
+    original = service.api.text
+    def rate_limited(chat, text):
+        if "signed-url" in text:
+            raise tg.BotError(429)
+        return original(chat, text)
+    monkeypatch.setattr(service.api, "text", rate_limited)
+    with pytest.raises(tg.BotError):
+        service.notify()
+    with store.db() as c:
+        assert c.execute("SELECT delivery FROM telegram_jobs WHERE job_id=?", (job['id'],)).fetchone()[0] == "pending"
+    monkeypatch.setattr(service.api, "text", original)
+    service.notify()
+    assert tg.review(job["id"])["prompt_message"]
+    assert any('signed-url' in fields.get('text','') for _,fields,_ in service.api.calls)
+
+
+def test_images_available_without_local_worker_folder(service, monkeypatch):
+    import hashlib
+    from pathlib import Path
+    from types import SimpleNamespace
+    job = complete(service)
+    monkeypatch.setenv('S3_BUCKET', 'fixture')
+    payload = b'image bytes'
+    record = dict(name='still-001.png', size=len(payload), digest=hashlib.sha256(payload).hexdigest(), object_key='obj')
+    monkeypatch.setattr(storage, 'records', lambda _: [record, dict(name='final.mp4')])
+    monkeypatch.setattr(storage, 'client', lambda: SimpleNamespace(download_file=lambda bucket, key, path: Path(path).write_bytes(payload)))
+    service.send_images('101', job)
+    assert service.api.calls[-1][0] == 'sendDocument'

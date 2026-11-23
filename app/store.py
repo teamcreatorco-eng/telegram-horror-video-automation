@@ -43,9 +43,13 @@ def folder(ident):
     if len(ident)!=32 or any(c not in '0123456789abcdef' for c in ident): raise ValueError('Invalid job id')
     return DATA/ident
 
-def update(ident, **values):
+def update(ident, *, expected_worker=None, **values):
     assert set(values)<= {'status','stage','progress','error','cancel','heartbeat','worker','regenerate_scene','enqueued','retry_at','retry_count','planning_resumes'}
-    with db() as c: c.execute('UPDATE jobs SET '+','.join(k+'=?' for k in values)+' WHERE id=?', (*values.values(),ident))
+    where = "id=?" if expected_worker is None else "id=? AND worker=? AND status='running'"
+    params = (ident,) if expected_worker is None else (ident, expected_worker)
+    with db() as c:
+        return c.execute('UPDATE jobs SET '+','.join(k+'=?' for k in values)+' WHERE '+where,
+                         (*values.values(), *params)).rowcount
 
 def get(ident):
     with db() as c: row=c.execute('SELECT * FROM jobs WHERE id=?',(ident,)).fetchone()
