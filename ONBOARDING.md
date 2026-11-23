@@ -50,6 +50,10 @@ unrecognized names. Quiet scenes remain quiet; effects are not guessed from narr
 Radio interference is a short texture rather than continuous hiss. Sustained rain/fire/wind
 ambience uses a separate quiet bus and is lowered under speech; short action impacts remain
 separate from that bus. Both recorded sounds and synthesized fallbacks respect texture limits.
+The default opening-door recording is the user-approved **Door B** (qubodup DoorOpen06).
+The bundled sound-effects renderer requires no paid sound service, Gemini request, or
+additional GPU rental. CPU editing still uses the resources of the chosen host. Visual
+event-based timing is not yet implemented; current cue timing remains plan-based.
 
 ### Windows desktop shortcut for localhost
 

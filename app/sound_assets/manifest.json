@@ -68,8 +68,9 @@
     "license": "CC0-1.0",
     "author": "qubodup",
     "source": "https://opengameart.org/content/door-open-door-close-set",
-    "sha256": "decc00870063ffe96c897ac058022ad6f1802c1ff5cb89b89acc176f81dd75dc",
-    "bytes": 48146
+    "sha256": "a2622d780b75805b2d1667de123ba89ad9c6432aca11689e56149a242fad5da3",
+    "bytes": 48152,
+    "variant": "Door B / qubodup-DoorOpen06"
   },
   "latch": {
     "file": "latch.wav",
