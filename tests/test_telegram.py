@@ -15,6 +15,52 @@ class FakeAPI:
         return {'message_id':len(self.calls)}
     def text(self,chat,text):return self.call('sendMessage',{'chat_id':chat,'text':text})
 
+
+def test_music_preview_choice_precedes_enqueue_and_is_owned(service, monkeypatch, tmp_path):
+    from app import raghu_pipeline, raghu_music
+    monkeypatch.setenv('MEDIA_BACKEND', 'raghu')
+    monkeypatch.setenv('TELEGRAM_PRODUCTION_MODE', 'live')
+    monkeypatch.setenv('ALLOW_PAID_GENERATION', 'true')
+    monkeypatch.setattr(raghu_pipeline, 'production_credentials', lambda: None)
+    monkeypatch.setattr(raghu_pipeline, 'validate_music_for_request', lambda request: None)
+    preview = tmp_path / 'preview.mp4'
+    preview.write_bytes(b'preview')
+    monkeypatch.setattr(raghu_music, 'choices', lambda: [dict(id='ghostly-piano',
+        title='Ghostly Piano Horror', preview=preview, file=tmp_path / 'music.mp3')])
+    queued=[]
+    monkeypatch.setattr(pipeline,'enqueue',lambda ident:queued.append(ident) or True)
+    service.handle(update('/generate'))
+    service.handle(update('30 seconds',ident=2))
+    assert not queued
+    assert any(call[0]=='sendVideo' for call in service.api.calls)
+    service.handle(update('Ghostly Piano Horror',uid=202,ident=3))
+    assert not queued
+    service.handle(update('Ghostly Piano Horror',ident=4))
+    assert len(queued)==1
+    assert store.all_jobs()[0]['request']['music_track']=='ghostly-piano'
+    service.handle(update('Ghostly Piano Horror',ident=4))
+    assert len(queued)==1
+
+
+def test_music_choice_survives_failed_preview_and_allows_no_music(service, monkeypatch, tmp_path):
+    from app import raghu_pipeline, raghu_music
+    monkeypatch.setenv('MEDIA_BACKEND','raghu')
+    monkeypatch.setenv('TELEGRAM_PRODUCTION_MODE','live')
+    monkeypatch.setenv('ALLOW_PAID_GENERATION','true')
+    monkeypatch.setattr(raghu_pipeline,'production_credentials',lambda:None)
+    preview=tmp_path/'preview.mp4';preview.write_bytes(b'preview')
+    monkeypatch.setattr(raghu_music,'choices',lambda:[dict(id='ghostly-piano',title='Ghostly Piano Horror',preview=preview)])
+    service.handle(update('/generate'))
+    service.api.fail_video=True
+    with pytest.raises(tg.BotError):
+        service.handle(update('30 seconds',ident=2))
+    assert not store.all_jobs()
+    service.api.fail_video=False
+    service.handle(update('/music',ident=3))
+    service.handle(update('No music',ident=4))
+    job,=store.all_jobs()
+    assert job['request']['music_track']=='none'
+
 @pytest.fixture
 def service(tmp_path,monkeypatch):
     monkeypatch.setattr(store,'DATA',tmp_path)

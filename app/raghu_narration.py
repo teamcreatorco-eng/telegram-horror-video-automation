@@ -40,7 +40,8 @@ def clone_reference():
 
 
 def narrator_line(shot):
-    return shot.get("speaker", "NARRATOR") == "NARRATOR" and not shot.get("dialogue_voice")
+    # One established narrator voices the entire film, including reported dialogue.
+    return True
 
 
 def narration_lines(shots):
@@ -174,9 +175,8 @@ def produce(folder, shots, check, progress):
                         for attempt in range(3):
                             check()
                             try:
-                                who = shot.get("dialogue_voice")
-                                voice_name = "hi-IN-SwaraNeural" if who == "female" else VOICE
-                                rate, pitch = ("-4%", "+1Hz") if who else ("-8%", "-7Hz")
+                                voice_name = VOICE
+                                rate, pitch = "-8%", "-7Hz"
                                 voice = edge_tts.Communicate(shot["narration"], voice_name, rate=rate, pitch=pitch)
                                 await asyncio.wait_for(voice.save(str(mp3)), timeout=35)
                                 break

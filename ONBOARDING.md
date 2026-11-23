@@ -35,25 +35,31 @@ conditioning, resolution, frames and sampling settings remain unchanged. Per-sta
 are written to `results/events.jsonl` on the GPU. A 20-second clip-render target is not a
 verified benchmark; cold setup and first-clip overhead must be counted separately.
 
-### Scene sound effects
+### Raw audio and optional music
 
-Keep `RAGHU_SOUND_EFFECTS=true` to mix action effects and scene ambience automatically.
-`RAGHU_BACKGROUND_AUDIO` controls the music separately. The planner supplies timed
-sound cues; the editor places them after narration-driven picture cuts. Saved readable
-sound directions are also supported. Rain, fire, radio static, doors, pages, glass,
-water drips, boiling/sizzling, wind and nonverbal laughter use bundled CC0 recordings;
-other supported cues have locally synthesized fallbacks. No sound API key or GPU
-is required. The recorded library adds roughly 3 MB to the checkout and Docker image.
-See `app/sound_assets/LICENSES.md` for sources. Inspect each job's
-`sound-effects-report.json` for selected assets, times, synthesized fallbacks and
-unrecognized names. Quiet scenes remain quiet; effects are not guessed from narration.
-Radio interference is a short texture rather than continuous hiss. Sustained rain/fire/wind
-ambience uses a separate quiet bus and is lowered under speech; short action impacts remain
-separate from that bus. Both recorded sounds and synthesized fallbacks respect texture limits.
-The default opening-door recording is the user-approved **Door B** (qubodup DoorOpen06).
-The bundled sound-effects renderer requires no paid sound service, Gemini request, or
-additional GPU rental. CPU editing still uses the resources of the chosen host. Visual
-event-based timing is not yet implemented; current cue timing remains plan-based.
+Automatic effects, rain, ambience, Obsidian and generated music are disabled. No
+Gemini sound analysis runs. Saved cue tags and the old `RAGHU_SOUND_EFFECTS` flag
+cannot add sound. Narration/dialogue and intro/disclaimer behavior are preserved.
+
+For one user-supplied background track, place the file on the chosen host and set
+`RAGHU_USER_BGM_FILE` to its readable path. Leave it blank for raw voice only.
+Keep `RAGHU_BACKGROUND_AUDIO=true` when using the supplied track. It loops as
+needed at a moderate level, gently lowered beneath speech. The legacy `BGM_FILE`
+and default Obsidian path are ignored. No sound API key or extra GPU is needed.
+
+To enable Telegram's four music choices, obtain the course music pack containing
+Ghostly Piano Horror, Midnight Graveyard Ambient, Shadows of Halloween Night and
+The Haunted Manor. Keep it outside Git. Run `python -m app.install_music PATH_TO_PACK`
+on the chosen host; on Railway install it into the service's persistent `/data` volume.
+The pack may include `previews/ID.mp4` samples. Without supplied previews the installer
+creates short music-only title-card samples locally using FFmpeg. No GPU is rented.
+
+After choosing a duration, Telegram sends the available previews and asks for one
+track or **No music**. `/music` resends samples while this question is pending.
+Selection is saved per production. Without installed tracks, it proceeds with raw
+narration. All narration—including reported character speech—uses the same narrator.
+The approved mix applies narration gain 0.765 after normalization and -24 LUFS music
+with gentle speech ducking; speech pacing is unchanged.
 
 ### Windows desktop shortcut for localhost
 

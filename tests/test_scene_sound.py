@@ -52,7 +52,7 @@ def test_rendered_effect_is_audible_at_actual_edited_cue_time(tmp_path):
     assert report[0]['at_seconds'] == 1
 
 
-def test_effects_can_be_exported_without_music_or_narration(tmp_path, monkeypatch):
+def test_legacy_effect_cues_do_not_add_sound_to_raw_export(tmp_path, monkeypatch):
     if not media.available():
         pytest.skip('FFmpeg required')
     from app import raghu_pipeline
@@ -63,7 +63,7 @@ def test_effects_can_be_exported_without_music_or_narration(tmp_path, monkeypatc
     plan = {'shots': [{'id': '001', 'sound_design': '[effect:radio_static@0]'}], 'requested_seconds': 1}
     raghu_pipeline.edit(tmp_path, plan, lambda: None, music=False, opening=False)
     report = json.loads((tmp_path / 'sound-effects-report.json').read_text())
-    assert report['effects'] and report['effects'][0]['effect'] == 'radio'
+    assert report['effects'] == []
     assert any(s['codec_type'] == 'audio' for s in media.probe(tmp_path / 'final.mp4')['streams'])
 
 
@@ -117,7 +117,7 @@ def test_no_music_instruction_does_not_cancel_requested_scene_effect():
     assert row['sound_cues'] == [{'effect': 'radio', 'at': 0}]
 
 
-def test_synthesized_scene_score_is_routed_separately_from_effects(tmp_path, monkeypatch):
+def test_no_synthesized_score_is_added_when_user_music_is_missing(tmp_path, monkeypatch):
     if not media.available():
         pytest.skip('FFmpeg required')
     from app import raghu_pipeline
@@ -126,18 +126,11 @@ def test_synthesized_scene_score_is_routed_separately_from_effects(tmp_path, mon
     monkeypatch.setattr(raghu_pipeline.raghu_music, 'source', lambda: None)
     media.ff('-f', 'lavfi', '-i', 'color=c=blue:s=64x64:r=24', '-t', '2', '-an',
              '-c:v', 'libx264', tmp_path / 'shot-001.mp4')
-    calls = []
-    original = raghu_pipeline.render_cues
-    def render(path, timeline, *args, **kwargs):
-        calls.append((path.name, timeline))
-        return original(path, timeline, *args, **kwargs)
-    monkeypatch.setattr(raghu_pipeline, 'render_cues', render)
     raghu_pipeline.edit(tmp_path, {'shots': [{'id': '001', 'sound_design': '[score:dread] [effect:knock@0.5]'}]},
                         lambda: None, music=True, opening=False)
-    effects = next(rows for name, rows in calls if name == 'cues.wav')
-    score = next(rows for name, rows in calls if name == 'scene-score.wav')
-    assert all(row['score'] == 'none' for row in effects)
-    assert all(not row['sound_cues'] for row in score)
+    report = json.loads((tmp_path / 'sound-effects-report.json').read_text())
+    assert report['effects'] == []
+    assert report['music_source'] is None
 
 
 def test_radio_static_is_a_brief_texture_not_whole_shot_rain(tmp_path):

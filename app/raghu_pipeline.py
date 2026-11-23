@@ -16,7 +16,6 @@ from pathlib import Path
 from PIL import Image
 
 from . import media, raghu_narration, store
-from .raghu_sound import render_cues, resolve_shot_sound, mix_soundtrack
 from . import raghu_music
 from .raghu_services import ASSETS, STYLE, GeminiUnavailable, choose_title, narrate, plan, required, review_continuity, review_motion, review_still, rewrite_still_prompt
 from .raghu_vast import VastConnectionLost, image_model, motion_model, rent, uses_ending_image
@@ -104,6 +103,11 @@ class RenderReviewNeedsRetake(RuntimeError):
 FLAT_STYLE = ("Every frame must be hand-drawn-looking 2D ink and matte flat cel shading. "
               "Preserve the same facial design, colors and scale throughout. No photoreal humans, 3D, CGI, "
               "glossy skin, rendered hair, style transitions, or cutaways.")
+
+
+def validate_music_for_request(request):
+    if os.getenv('RAGHU_BACKGROUND_AUDIO', 'true').lower() in {'1', 'true', 'yes'}:
+        raghu_music.validate_source(request.get('music_track'))
 
 
 def production_credentials():
@@ -1212,7 +1216,7 @@ def narration(folder, shots, check, progress):
         if i % 10 == 0:
             progress(f"Narration {i+1}/{len(shots)}", 81)
 
-def edit(folder, shot_plan, check, *, music=True, opening=False, sound_effects=True):
+def edit(folder, shot_plan, check, *, music=True, opening=False, sound_effects=False, music_track=None):
     """Retain a full frame at each cut and derive each shot end from its spoken line."""
     cuts = []
     timeline = []
@@ -1231,7 +1235,7 @@ def edit(folder, shot_plan, check, *, music=True, opening=False, sound_effects=T
         scratch = Path(scratch)
         for index, shot in enumerate(shot_plan["shots"]):
             check()
-            sound = resolve_shot_sound(shot)
+            sound = dict(score='none', sound_cues=[], unresolved_sound_cues=[])
             ident = shot["id"]
             clip = folder / f"shot-{ident}.mp4"
             if raghu_narration.uses_clone():
@@ -1292,54 +1296,24 @@ def edit(folder, shot_plan, check, *, music=True, opening=False, sound_effects=T
         speech_track = scratch / "speech.wav"
         media.ff("-f", "concat", "-safe", "1", "-i", audio_concat, "-c:a", "pcm_s16le", speech_track)
         # Encode speech once for the whole film, avoiding AAC padding between scenes.
-        speech_filter = "anull" if raghu_narration.silent() else "loudnorm=I=-16:TP=-2:LRA=9"
+        speech_filter = "anull" if raghu_narration.silent() else "loudnorm=I=-16:TP=-2:LRA=9,volume=0.765"
         media.ff("-i", picture, "-i", speech_track, "-map", "0:v:0", "-map", "1:a:0",
                  "-c:v", "copy", "-af", speech_filter, "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "160k", joined)
         final = scratch / "final.mp4"
-        bed = None
-        music_source = None
-        if music:
-            bed = scratch / "bed.wav"
-            music_source = raghu_music.source()
-            if music_source:
-                raghu_music.render(bed, cursor, music_source)
-            else:
-                # Original score, synthesized per timeline. Build tension toward the final reveal.
-                rise = f"(0.60+0.40*t/{max(cursor, 1):.6f})"
-                pulse = "pow(0.5+0.5*cos(2*PI*1.6*t),12)"
-                swell = "pow(0.5+0.5*cos(2*PI*0.115*t+2),3)"
-                sub = f"0.20*sin(2*PI*(47*t+0.45*sin(0.8*t)))*{pulse}"
-                drone = "0.08*sin(2*PI*55*t)+0.07*sin(2*PI*58.3*t)+0.055*sin(2*PI*82.4*t)"
-                tension = f"(0.10*sin(2*PI*173*t)+0.08*sin(2*PI*184*t+0.8*sin(1.1*t)))*{swell}"
-                hit = f"0.10*sin(2*PI*(67*t+1.4*sin(1.6*t)))*pow({swell},4)"
-                strings = "(0.045*sin(2*PI*347*t)+0.035*sin(2*PI*369*t))*pow(0.5+0.5*cos(2*PI*0.27*t+0.7),4)"
-                left = f"{rise}*({sub}+{drone}+{tension}+{hit}+{strings})"
-                right = f"{rise}*({sub}+{drone}+0.82*({tension})+{hit}+0.028*sin(2*PI*193*t)*{swell}+0.8*({strings}))"
-                media.ff("-f", "lavfi", "-i", f"aevalsrc='{left}|{right}':s=48000",
-                         "-af", f"highpass=f=32,lowpass=f=1700,volume=1.50,afade=t=in:d=0.25,"
-                                f"afade=t=out:st={max(0, cursor-.7):.6f}:d=0.7",
-                         "-t", f"{cursor:.6f}", bed)
-                scene_score = scratch / 'scene-score.wav'
-                render_cues(scene_score, [{**row, 'sound_cues': []} for row in timeline], opening_seconds, cursor)
-                combined_bed = scratch / 'combined-bed.wav'
-                media.ff('-i', bed, '-i', scene_score, '-filter_complex',
-                         '[0:a][1:a]amix=inputs=2:duration=first:normalize=0[a]',
-                         '-map', '[a]', '-ar', '48000', '-ac', '2', combined_bed)
-                bed = combined_bed
-        effects_report = []
-        if music or sound_effects:
-            cues = scratch / "cues.wav"
-            ambience = scratch / 'ambience.wav'
-            cue_timeline = [{**row, "score": "none",
-                             "sound_cues": row["sound_cues"] if sound_effects else []} for row in timeline]
-            effects_report = render_cues(cues, cue_timeline, opening_seconds, cursor, bus='effects')
-            effects_report += render_cues(ambience, cue_timeline, opening_seconds, cursor, bus='ambience')
-            mix_soundtrack(joined, final, cues, bed, ambience=ambience)
+        # Only a newly supplied user track may accompany the raw voice tracks.
+        # Legacy effect flags, score tags and the old Obsidian bed are ignored.
+        music_source = (raghu_music.source(music_track) if music_track is not None
+                        else raghu_music.source()) if music else None
+        if music_source:
+            bed = scratch / "user-music.wav"
+            raghu_music.render(bed, cursor, music_source)
+            raghu_music.mix(joined, final, bed)
         else:
             shutil.copyfile(joined, final)
-        store.save(folder / 'sound-effects-report.json', dict(effects=effects_report,
-                   unresolved=[dict(shot=row['id'], names=row['unresolved_sound_cues'])
-                               for row in timeline if row['unresolved_sound_cues']]))
+        store.save(folder / 'sound-effects-report.json', dict(
+            effects=[], timing_source='disabled', observations=[],
+            music_source=str(music_source) if music_source else None,
+            policy='raw narration/dialogue plus explicitly supplied user music only'))
         if opening:
             shutil.copyfile(opening_file, scratch / "opening.mp4")
             final.replace(scratch / "story.mp4")
@@ -1371,6 +1345,7 @@ def work(ident, folder, request, check, progress):
     planning_only = saved is None and (
         request.get("raghu_plan_only") or os.getenv("RAGHU_PLAN_ONLY", "").lower() == "true")
     if not planning_only:
+        validate_music_for_request(request)
         production_credentials()
     requested_seconds = saved.get("requested_seconds", saved["seconds"]) if saved else request.get("duration_seconds")
     if requested_seconds is None:
@@ -1462,10 +1437,10 @@ def work(ident, folder, request, check, progress):
              else "Vast closed. Generating Hindi narration", 80)
     narration(folder, shot_plan["shots"], check, progress)
     progress("Editing the silent video" if raghu_narration.silent()
-             else "Editing picture to narration and mixing original horror ambience", 90)
+             else "Editing picture to narration", 90)
     edit(folder, shot_plan, check, opening=not raghu_narration.silent(),
          music=os.getenv("RAGHU_BACKGROUND_AUDIO", "true").lower() in {"1", "true", "yes"},
-         sound_effects=os.getenv("RAGHU_SOUND_EFFECTS", "true").lower() in {"1", "true", "yes"})
+         sound_effects=False, music_track=request.get('music_track'))
     logging.warning("Finished saved production %s", ident)
 
 def smoke(ident, folder, mode, check, progress):

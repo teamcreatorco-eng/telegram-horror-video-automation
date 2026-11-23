@@ -19,6 +19,31 @@ CONTINUITY_FAILURES = (
 )
 
 
+def narrator_only_story(content):
+    """Keep one audio speaker even if a writer returns a character-tagged beat."""
+    try:
+        value = json.loads(content)
+    except (ValueError, TypeError):
+        return content  # Original planner owns malformed JSON repair.
+    if (not isinstance(value, dict) or not isinstance(value.get('speech'), list)
+            or not isinstance(value.get('characters'), list)):
+        return content
+    if any(not isinstance(c, dict) or not isinstance(c.get('tag'), str)
+           or not isinstance(c.get('name'), str) for c in value['characters']):
+        return content
+    if any(not isinstance(b, dict) or not isinstance(b.get('line'), str)
+           or not isinstance(b.get('speaker'), str) for b in value['speech']):
+        return content
+    names = {c['tag']: c['name'] for c in value.get('characters', [])}
+    for beat in value.get('speech', []):
+        if beat.get('speaker') != 'NARRATOR':
+            name = names.get(beat.get('speaker'), '')
+            attribution = f'{name} ने कहा, ' if re.fullmatch(r'[\u0900-\u097f ]+', name) else 'उसने कहा, '
+            beat['line'] = attribution + beat['line']
+            beat['speaker'] = 'NARRATOR'
+    return json.dumps(value, ensure_ascii=False)
+
+
 class CloneChatDraft(youtube_clone_writer.Draft):
     characters: list[youtube_clone_writer.Character] = Field(min_length=1, max_length=3)
     backgrounds: list[youtube_clone_writer.Background] = Field(min_length=1, max_length=6)
@@ -55,7 +80,8 @@ class DeepSeekWriter:
 
     def complete(self, prompt, *, max_tokens, temperature):
         self.check()
-        writing_story = "the exact title is the only story input" in prompt
+        writing_story = ("the exact title is the only story input" in prompt
+                         and "This is a saved, approved script." not in prompt)
         prompt += "\n" + youtube_clone_writer.setting_direction(self.folder)
         if writing_story:
             if image_model() == "qwen2511":
@@ -158,6 +184,14 @@ class DeepSeekWriter:
                 "Count the words after editing. Return the complete corrected JSON object.\n"
                 f"Draft: {self.last_story}"
             )
+        if writing_story:
+            prompt += (
+                '\nNARRATOR-ONLY AUDIO POLICY: every speech beat has speaker NARRATOR. '
+                'The same off-screen narrator tells the entire story. Report what characters say '
+                'in natural third-person Hindi, for example उसने कहा कि दरवाज़ा मत खोलना। '
+                'Do not assign any speech to character tags or use first-person acted dialogue. '
+                'Keep attribution within the existing word budget. Keep characters and physical '
+                'actions in the story; only speech delivery changes. No sound effects or music instructions.')
         # Extra review tokens cover both reasoning and the JSON repair.
         reasoning = reviewing and (self.simpler_draft or validation_retry)
         if reasoning:
@@ -169,6 +203,7 @@ class DeepSeekWriter:
             if reviewing:
                 self.record_review_issues(content)
             if writing_story:
+                content = narrator_only_story(content)
                 self.last_story = content
             return bind_locked_cast(content, locked_cast) if locked_cast else content
         floor = 19 if self.simpler_draft else 0
@@ -206,6 +241,7 @@ class DeepSeekWriter:
         if reviewing:
             self.record_review_issues(content)
         if writing_story:
+            content = narrator_only_story(content)
             self.last_story = content
         self.check()
         store.save(path, {"content": content, "usage": result.get("usage"), "model": result.get("model")})

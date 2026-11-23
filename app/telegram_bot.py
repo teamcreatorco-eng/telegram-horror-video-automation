@@ -7,7 +7,7 @@ import hashlib,json,logging,os,re,secrets,tempfile,threading,time,zipfile
 import shutil
 from pathlib import Path
 import httpx
-from . import auth,database,media,pipeline,storage,store,zernio
+from . import auth,database,media,pipeline,storage,store,zernio,raghu_music
 from .models import Request
 
 STATE='not_configured'
@@ -248,9 +248,24 @@ class Service:
                 if text.casefold() == "/cancel":
                     with store.db() as c:
                         c.execute("DELETE FROM telegram_duration_requests WHERE bot=? AND chat_id=? AND user_id=?", draft_key)
-                    self.api.text(cid, "Duration request cancelled.")
+                    self.api.text(cid, "Video setup cancelled.")
                     return
-                if not command.startswith('/'):
+                if pending.get('awaiting_music') and command == '/music':
+                    self.ask_music(cid)
+                    return
+                if pending.get('awaiting_music') and not command.startswith('/'):
+                    choice = next((c['id'] for c in raghu_music.choices()
+                                   if text.casefold() in (c['title'].casefold(), c['id'])), None)
+                    if text.casefold() == 'no music':
+                        choice = 'none'
+                    if choice is None:
+                        self.api.text(cid, 'Choose a music title below, No music, or /music to hear the samples again.')
+                        return
+                    pending = {k:v for k,v in pending.items() if k != 'awaiting_music'}
+                    pending['music_track'] = choice
+                    duration = pending['duration_seconds']
+                    text = pending['title']
+                elif not command.startswith('/'):
                     if text.casefold() == "other":
                         self.api.call("sendMessage", {"chat_id":cid, "text":CUSTOM_DURATION_PROMPT,
                                       "reply_markup":{"remove_keyboard":True}})
@@ -426,13 +441,21 @@ class Service:
                 self.ask_duration(cid)
                 return
             request = {**pending, "duration_seconds": duration}
+            if not planning_only and 'music_track' not in request and raghu_music.choices():
+                with store.db() as c:
+                    c.execute("UPDATE telegram_duration_requests SET request=? WHERE bot=? AND chat_id=? AND user_id=?",
+                              (json.dumps({**request, 'awaiting_music': True}, ensure_ascii=False), *draft_key))
+                self.ask_music(cid)
+                return
+            request.setdefault('music_track', 'none')
             if not planning_only:
                 request["script_options"] = True
         if request['mode']=='live' and smoke_mode != 'review' and os.getenv('ALLOW_PAID_GENERATION','false').lower()!='true':
             self.api.text(cid,'Live production is disabled in the deployment settings.');return
         if raghu and request['mode']=='live' and not smoke_mode and not planning_only:
-            from .raghu_pipeline import production_credentials
+            from .raghu_pipeline import production_credentials, validate_music_for_request
             try:
+                validate_music_for_request(request)
                 production_credentials()
             except RuntimeError as exc:
                 self.api.text(cid, f'Production setup is incomplete. {exc} No GPU was rented.')
@@ -501,6 +524,18 @@ class Service:
             'keyboard': [[{'text': label} for label in DURATION_CHOICES]],
             'resize_keyboard': True, 'one_time_keyboard': True,
         }})
+
+    def ask_music(self, cid):
+        tracks = raghu_music.choices()
+        self.api.text(cid, 'Choose the background music. Narration keeps the approved volume; these are short previews of each installed track.')
+        for track in tracks:
+            with track['preview'].open('rb') as stream:
+                self.api.call('sendVideo', {'chat_id': cid, 'caption': track['title'],
+                              'supports_streaming': True}, files={'video': (
+                                  track['preview'].name, stream, 'video/mp4')})
+        self.api.call('sendMessage', {'chat_id': cid, 'text': 'Which track should this video use?',
+                      'reply_markup': {'keyboard': [[{'text': t['title']}] for t in tracks]
+                          + [[{'text': 'No music'}]], 'resize_keyboard': True, 'one_time_keyboard': True}})
 
     def send_status(self, cid, job, *, detailed=False):
         if job['status'] == 'awaiting_script':

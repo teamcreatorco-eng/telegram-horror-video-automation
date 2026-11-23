@@ -18,10 +18,11 @@ def test_music_crossfade_reaches_requested_length(tmp_path):
 def test_private_track_and_override(monkeypatch, tmp_path):
     monkeypatch.setattr(raghu_music.store, "DATA", tmp_path)
     monkeypatch.delenv("BGM_FILE", raising=False)
+    monkeypatch.delenv("RAGHU_USER_BGM_FILE", raising=False)
     assert raghu_music.source() is None
     p = tmp_path / "_music" / "obsidian.mp3"
     p.parent.mkdir(); p.write_bytes(b"fixture")
-    assert raghu_music.source() == p
+    assert raghu_music.source() is None
     custom = tmp_path / "custom.wav"; custom.write_bytes(b"fixture")
-    monkeypatch.setenv("BGM_FILE", str(custom))
+    monkeypatch.setenv("RAGHU_USER_BGM_FILE", str(custom))
     assert raghu_music.source() == custom

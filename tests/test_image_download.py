@@ -244,7 +244,13 @@ def test_real_http_truncation_recovers_without_changing_model_bytes(tmp_path, mo
                                    headers=dict(request.header_items())), timeout=timeout)
         m, d = manager(tmp_path, monkeypatch, open_)
         assert d.download(item(data)).read_bytes() == data
-        assert requests == [(None, 'Bearer private-token'), ('bytes=1000-', 'Bearer private-token')]
+        # TCP can deliver the resumed body in several partial reads on Windows.
+        # Verify range progress and auth, not an OS-dependent exact request count.
+        assert requests[:2] == [(None, 'Bearer private-token'), ('bytes=1000-', 'Bearer private-token')]
+        offsets = [int(header[6:-1]) for header, _ in requests[1:]]
+        assert offsets == sorted(set(offsets))
+        assert all(0 < offset < len(data) for offset in offsets)
+        assert all(auth == 'Bearer private-token' for _, auth in requests)
     finally:
         server.shutdown()
         server.server_close()

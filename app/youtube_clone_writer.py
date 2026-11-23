@@ -196,8 +196,7 @@ def renderer_plan(project, draft, seconds=60):
         score, cues = parse_sound_design(row.sound_design)
         shots.append(dict(
             id=f"{row.scene_number:03d}", narration=row.speech,
-            speaker=actor.tag[1:] if actor else "NARRATOR",
-            speaker_description=actor.look_summary if actor else "", dialogue_voice=actor.voice if actor else "",
+            speaker="NARRATOR", speaker_description="", dialogue_voice="",
             still=render_shot["flux"]["prompt"], camera=row.camera, visual_action=row.visual_action, motion=f"{row.visual_action} Camera: {row.camera}.",
             clone_motion=motion, simple_prompt=True, location=location, cast=tags,
             start=dict(location=location, cast=opening_tags, staging=row.first_frame_description, props={}),

@@ -162,11 +162,13 @@ def test_continuous_job_sends_full_script_and_pulls_completion_last(tmp_path, mo
         def phase(self, command, timeout):
             manifest = store.read(folder / 'narrator-input.json')
             assert len(manifest['lines']) == 3
-            assert manifest['lines'][1]['speaker'] == 'DIALOGUE'
-            for name, seconds in [('narration-001.wav', 1), ('narration-003.wav', 1), ('narration-master.wav', 2)]:
+            assert manifest['lines'][1]['speaker'] == 'NARRATOR'
+            for name, seconds in [('narration-001.wav', 1), ('narration-002.wav', 1),
+                                  ('narration-003.wav', 1), ('narration-master.wav', 3)]:
                 media.tone(remote_files / name, seconds, 'none')
             store.save(remote_files / 'narration-timing.json', dict(version=VERSION, key=manifest['key'],
-                spans=[dict(id='001', start=0, end=1), dict(id='003', start=1, end=2)]))
+                spans=[dict(id='001', start=0, end=1), dict(id='002', start=1, end=2),
+                       dict(id='003', start=2, end=3)]))
         def pull(self, files, destination, **kwargs):
             pulls.append(files)
             for name in files:

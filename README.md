@@ -62,3 +62,16 @@ sampling passes, and opening-image motion conditioning are unchanged. The worker
 installs and checks NVFP4 kernels, including on a previously prepared video environment.
 Existing paused jobs retain the precision recorded in their rental journal. The historical
 51–57 second timings are benchmark results, not a guarantee for every host or shot.
+### Raw audio and your own music
+
+Automatic effects, ambience, synthetic scores, visual sound analysis and the old
+Obsidian track are disabled. Output keeps narration/dialogue only until you set
+`RAGHU_USER_BGM_FILE` to your own music file on the host. That one track is mixed
+at a moderate level, gently lowered under speech. Legacy `BGM_FILE` and sound cue
+tags cannot restore the old background sounds. No sound-analysis API calls occur.
+
+With the four course tracks installed privately, Telegram sends short previews after
+duration selection and asks which music to use for that production. Use `/music` to
+hear the previews again while choosing. Character dialogue is reported by the same
+narrator throughout; no character voice generator is used. Narration keeps its natural
+pace at the approved 0.765 gain. See [music installation](ONBOARDING.md#raw-audio-and-optional-music).
