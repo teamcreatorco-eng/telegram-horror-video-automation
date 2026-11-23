@@ -116,3 +116,33 @@ def test_absent_events_retracts_stale_cost_sample_without_a_cleanup_error(tmp_pa
     (tmp_path / 'events.jsonl').unlink()
     assert cost.record_rental_cost(tmp_path, catalog, 102) is None
     assert cost.load_observations(catalog) == []
+
+
+def test_offer_above_both_legacy_caps_is_ranked_by_total_cost(monkeypatch, tmp_path):
+
+    for key, value in {
+        'RAGHU_MAX_HOURLY_USD': '0.01', 'RAGHU_MAX_JOB_USD': '0.02',
+        'VAST_SSH_KEY_PATH': str(tmp_path/'key'), 'RAGHU_GPU': 'RTX_5090',
+        'RAGHU_QUANTIZATION': 'nvfp4', 'RAGHU_MOTION_MODEL': 'ltx',
+        'RAGHU_IMAGE_MODEL': 'flux', 'RAGHU_MIN_DOWNLOAD_MBPS': '500',
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(vast, 'model_manifest', lambda _: [])
+    monkeypatch.setattr(vast, 'worker_hf_token', lambda *_: None)
+    monkeypatch.setattr(vast.subprocess, 'check_output', lambda *a, **kw: b'ssh-ed25519 fake')
+    monkeypatch.setattr(vast, 'ensure_ssh_key', lambda *_: None)
+    monkeypatch.setattr(vast, 'instances', lambda: [])
+    row = dict(cpu_ram=64000, inet_down=800, cuda_max_good=13, inet_up_cost=0)
+    offers = [dict(row, id=1, dph_total=.55, inet_down_cost=.30),
+              dict(row, id=2, dph_total=.70, inet_down_cost=0)]
+    monkeypatch.setattr(vast, 'vast', lambda action, *args: {'credit': .05} if action=='show' else offers)
+    class SelectionObserved(Exception):
+        pass
+    def inspect(ranked, *args):
+        assert [o['id'] for o in ranked] == [2, 1]
+        raise SelectionObserved()
+    monkeypatch.setattr(vast, 'create_rental', inspect)
+    monkeypatch.setattr(vast, 'finish_rental', lambda *_: None)
+    with pytest.raises(SelectionObserved), vast._rent_once(tmp_path, 'test', lambda: None, progress=lambda *_: None,
+                                                           pending_shots=120, startup_spent=3):
+        pytest.fail('The test must stop before any rental is created')

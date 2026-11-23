@@ -29,7 +29,7 @@ For localhost, install Python 3.11, FFmpeg/FFprobe, and OpenSSH. Run `python -m 
 
 ## Service variables
 
-Use the [Vast-backed environment template](../.env.raghu.example). Paid generation starts disabled in the template. Enable it after configuring your own credentials and checking the rental limits. Start with **Other → 30 seconds** for the first live test. The 10-minute option needs a host and budget that cover the full job.
+Use the [Vast-backed environment template](../.env.raghu.example). Paid generation starts disabled in the template. Enable it after configuring your own credentials and checking your Vast balance. Start with **Other → 30 seconds** for the first live test. The bot ranks compatible offers by estimated generation and transfer cost. Actual charges can exceed the estimate. Older hourly and job cap settings are ignored.
 
 ```dotenv
 MEDIA_BACKEND=raghu
@@ -53,8 +53,6 @@ RAGHU_MOTION_MODEL=ltx
 RAGHU_LTX_END_FRAME=false
 RAGHU_QUANTIZATION=fp8
 RAGHU_TARGET_SECONDS=600
-RAGHU_MAX_HOURLY_USD=0.77
-RAGHU_MAX_JOB_USD=2.00
 ```
 
 Use a dedicated SSH key and paste its full private-key text into Railway. The Hugging Face read token must have access to the pinned LTX-2.5 weights. Gemini is optional for Gemini narration. AI visual review is disabled. The Vast job estimate screens offers using the estimated rent and transfer cost. Production can continue past that estimate, and the final invoice can exceed it. Use a short target such as 30 seconds for a first end-to-end integration test.
@@ -73,8 +71,8 @@ The worker checks image readability and video dimensions, frame count and decodi
 
 1. Run `/setup` to check required settings and tools without renting a GPU. No AI review test is required.
 2. Use `/status` to see the last error and the available recovery buttons. **Retry this step** resumes the same job using saved scripts, images, and clips. Existing files receive technical checks before the GPU starts. **Start new video** requests a duration for a separate production.
-3. If a new rental fails to establish SSH because its endpoint is unreachable, the worker verifies that contract has stopped before trying another eligible host within budget. If a previously working host cannot restart, retry when capacity returns. Check the existing contract in Vast before abandoning it. A stopped contract can still accrue disk charges.
-4. Credentials, access or credit errors need a fix in the provider account or deployment settings. Resolve the error before retrying the same job. For an operation timeout, check which step stopped responding. For a budget error, check the offer estimate against the remaining work. If Telegram itself is offline, check the local process or Railway logs and the bot token, then use `/status` again.
+3. If a new rental fails to establish SSH because its endpoint is unreachable, the worker verifies that contract has stopped before trying another eligible host. If a previously working host cannot restart, retry when capacity returns. Check the existing contract in Vast before abandoning it. A stopped contract can still accrue disk charges.
+4. Credentials, access or credit errors need a fix in the provider account or deployment settings. Resolve the error before retrying the same job. For an operation timeout, check which step stopped responding. If Telegram itself is offline, check the local process or Railway logs and the bot token, then use `/status` again.
 
 The production worker makes no Gemini vision calls. Visual reviewer outages cannot pause generation. File corruption, provider failures, missing credentials and SSH problems can still require recovery. An unfinished rental keeps its disk when stopped.
 
@@ -82,7 +80,7 @@ After the approved source assets are copied, the service checks that the Vast re
 
 ## Timing benchmark
 
-From this repository, with Vast, Hugging Face, and the rental limit variables configured:
+From this repository, with Vast and Hugging Face credentials configured:
 
 ```bash
 python -m tools.benchmark_raghu /path/to/render-plan.json /path/to/approved-stills /path/to/new-benchmark-dir

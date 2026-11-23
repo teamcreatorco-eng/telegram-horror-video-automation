@@ -1,4 +1,4 @@
-"""Budgeted Vast lease and SSH asset transport for the Raghu worker."""
+"""Cost-ranked Vast lease and SSH asset transport for the Raghu worker."""
 import base64
 import json
 import logging
@@ -31,13 +31,11 @@ def motion_model():
 
 
 def check_available_credit(credit, estimated_cost):
-    """An explicit operator override may start a test without its full estimate."""
+    """Estimates guide host selection. Only an empty account blocks a funded start."""
     if credit <= 0:
         raise RuntimeError("Vast credit is empty. Add credit before renting a GPU.")
     if credit < estimated_cost:
-        if os.getenv("RAGHU_ALLOW_LOW_BALANCE", "").lower() != "true":
-            raise RuntimeError(f"Vast has ${credit:.2f} credit. The lowest eligible rental needs about ${estimated_cost:.2f}.")
-        logging.warning("Starting with operator low-balance override: credit $%.2f, estimate $%.2f", credit, estimated_cost)
+        logging.warning("Available Vast credit $%.2f is below the projected cost $%.2f", credit, estimated_cost)
 
 
 def require_resume_credit():
@@ -704,7 +702,7 @@ def rent(folder, ident, check, *, progress=None, **options):
         previous = store.read(journal)
         if recover.get("user_recovery") and previous.get("recovery_stop") and not previous.get("ssh_ready_seconds"):
             store.save(recovery, {**recover, "replace_instance": previous["id"]})
-            report(f"Vast startup failed ({error.reason}). Checking another host within budget", 27)
+            report(f"Vast startup failed ({error.reason}). Checking another eligible host", 27)
             with _rent_once(folder, ident, check, progress=report, **options) as remote:
                 yield remote
             return
@@ -825,13 +823,11 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
     download_gb = image_gb + (0 if image_only else motion_gb)
     if not image_only and os.getenv("RAGHU_NARRATION_PROVIDER", "").lower() == "chatterbox":
         download_gb += 4
-    max_hourly = float(required("RAGHU_MAX_HOURLY_USD"))
-    cap = float(required("RAGHU_MAX_JOB_USD"))
     min_bandwidth = float(os.getenv("RAGHU_MIN_DOWNLOAD_MBPS", "500"))
     excluded_regions = {region.strip().upper() for region in
                         os.getenv("RAGHU_EXCLUDED_GPU_REGIONS", "").split(",") if region.strip()}
-    if not 0 < max_hourly <= 10 or not 0 < cap <= 100 or not 0 < min_bandwidth <= 10000:
-        raise RuntimeError("Raghu rental budget variables are invalid.")
+    if not 0 < min_bandwidth <= 10000:
+        raise RuntimeError("RAGHU_MIN_DOWNLOAD_MBPS must be greater than zero and at most 10000.")
     with tempfile.TemporaryDirectory(prefix="raghu-ssh-") as temp_name:
         temp = Path(temp_name)
         key_path = os.getenv("VAST_SSH_KEY_PATH")
@@ -874,7 +870,7 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
         excluded = previous.get("offer_id") if failed_start else None
         excluded_machine = previous.get("machine_id") if failed_start else None
         wait_until = time.monotonic() + (10 * 60 if previous.get("destroyed") and not startup_spent else 0)
-        progress("Looking for a verified Vast GPU within budget", 27)
+        progress("Comparing estimated costs for verified Vast GPUs", 27)
         while True:
             check()
             rows = vast("search", "offers", query, "--type", "on-demand", "--storage", "150",
@@ -885,9 +881,8 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
                         and all(o.get(k) is not None for k in
                         ("dph_total", "inet_down_cost", "inet_up_cost"))
                         and (o.get("geolocation") or "").rsplit(",", 1)[-1].strip().upper() not in excluded_regions
-                        and float(o["dph_total"]) <= max_hourly and float(o.get("inet_down", 0)) >= min_bandwidth
-                        and float(o.get("cpu_ram", 0)) >= 60000 and float(o.get("cuda_max_good", 0)) >= 13
-                        and quote(o) + startup_spent <= cap]
+                        and float(o.get("inet_down", 0)) >= min_bandwidth
+                        and float(o.get("cpu_ram", 0)) >= 60000 and float(o.get("cuda_max_good", 0)) >= 13]
             if eligible or time.monotonic() >= wait_until:
                 break
             for _ in range(6):
@@ -895,10 +890,10 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
                 time.sleep(5)
         if not eligible:
             if replace_failed_host:
-                raise RuntimeError("The original Vast rental is preserved. No different host fits the remaining job budget.")
+                raise RuntimeError("The original Vast rental is preserved. No different host meets the hardware and network requirements.")
             if startup_spent:
-                raise RuntimeError("The failed Vast rental was released. No replacement host fits the remaining job budget.")
-            raise RuntimeError("No Vast offer fits the GPU, bandwidth and job budget settings.")
+                raise RuntimeError("The failed Vast rental was released. No replacement host meets the hardware and network requirements.")
+            raise RuntimeError("No Vast offer meets the configured hardware and network requirements.")
         offer = min(eligible, key=quote)
         check_available_credit(credit, quote(offer))
         started = time.time()

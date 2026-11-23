@@ -139,7 +139,7 @@ def recovery_guidance(reason):
                 "Ask the deployment owner to check the failed step before retrying.")
     if "no vast offer" in reason or "no replacement host" in reason or "no different host" in reason:
         return ("No eligible GPU fits the current settings. Try again later, or ask the deployment owner "
-                "to check the hourly, transfer and total budget limits.")
+                "to check the hardware, region and download-speed settings.")
     if "credit" in reason or "http 402" in reason:
         return ("Check the named provider's balance or billing. Tap Retry this step once it is funded.")
     if any(term in reason for term in ("ssh key", "host identity", "http 401", "http 403", "required.")):
@@ -158,8 +158,7 @@ def recovery_guidance(reason):
 
 def production_setup_text():
     required = ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_IDS", "DEEPSEEK_API_KEY", "DEEPSEEK_MODEL",
-                "VAST_API_KEY",
-                "RAGHU_MAX_HOURLY_USD", "RAGHU_MAX_JOB_USD"]
+                "VAST_API_KEY"]
     if os.getenv("RAGHU_NARRATION_PROVIDER", "gemini").lower() == "gemini":
         required.append("GEMINI_API_KEY")
     if os.getenv("RAGHU_MOTION_MODEL", "ltx") == "ltx":
@@ -280,7 +279,7 @@ class Service:
                 return
         topic_request = ' '.join(re.findall(r"[\w']+", text.casefold()))
         if raghu and topic_request in ('remove the limit', 'remove the budget limit', 'remove the spending limit'):
-            self.api.text(cid, 'Rental limits are set in Railway. This message did not start a production.')
+            self.api.text(cid, 'Vast rentals are ranked by estimated cost. There is no hourly or per-video spending cap.')
             return
         choose_topic = raghu and (
             (command == '/generate' and len(text.split(maxsplit=1)) == 1)

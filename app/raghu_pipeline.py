@@ -113,8 +113,7 @@ def validate_music_for_request(request):
 
 def production_credentials():
     image_model()
-    for name in ("DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "VAST_API_KEY",
-                 "RAGHU_MAX_HOURLY_USD", "RAGHU_MAX_JOB_USD"):
+    for name in ("DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "VAST_API_KEY"):
         required(name)
     if os.getenv("RAGHU_NARRATION_PROVIDER", "gemini").lower() == "gemini":
         required("GEMINI_API_KEY")
