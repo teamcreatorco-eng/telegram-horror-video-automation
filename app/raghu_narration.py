@@ -6,11 +6,12 @@ import math
 import os
 import re
 import tempfile
+import subprocess
 import wave
 from pathlib import Path
 
 from . import media, store, bundled_media
-from .narration_layout import VERSION, request_key
+from .narration_layout import VERSION, request_key, paragraph_groups, aligned_spans
 from .raghu_vast import VastRemoteCommandFailed
 
 VOICE = "hi-IN-MadhurNeural"
@@ -118,8 +119,89 @@ def pending_clone(folder, shots):
     return [s for s in narrator if not readable_voice(output / f"narration-{s['id']}.wav")]
 
 
-def produce_clone(remote, folder, shots, check, progress, assets):
+def raw_paragraphs(folder, lines, key):
+    raw = clone_folder(folder) / ("raw-" + key)
+    return [(raw / f"paragraph-{i:03}.wav", group) for i, group in enumerate(paragraph_groups(lines))]
+
+
+def pending_rental_audio(folder, shots):
     missing = pending_clone(folder, shots)
+    if not missing:
+        return []
+    lines = narration_lines(shots)
+    key = request_key(lines, hashlib.sha256(clone_reference().read_bytes()).hexdigest())
+    return missing if any(not readable_voice(p) for p, _ in raw_paragraphs(folder, lines, key)) else []
+
+
+def align_recordings(folder, shots, check, progress):
+    if not pending_clone(folder, shots):
+        return  # Includes previously completed narration checkpoints.
+    lines = narration_lines(shots)
+    key = request_key(lines, hashlib.sha256(clone_reference().read_bytes()).hexdigest())
+    recordings = raw_paragraphs(folder, lines, key)
+    output = clone_folder(folder)
+    model = None
+    spans = []
+    cursor = 0
+    sample_rate = None
+    master = output / "narration-master.partial.wav"
+    with wave.open(str(master), "wb") as writer:
+        # Set a valid header even if the first saved paragraph cannot be read.
+        writer.setparams((1, 2, 24000, 0, "NONE", "not compressed"))
+        for index, (path, group) in enumerate(recordings, 1):
+            check()
+            progress(f"Editing: aligning saved Hindi paragraph {index}/{len(recordings)}", 82)
+            with wave.open(str(path), "rb") as source:
+                rate, frames = source.getframerate(), source.getnframes()
+                if source.getnchannels() != 1 or source.getsampwidth() != 2 or (sample_rate and rate != sample_rate):
+                    raise RuntimeError(f"Unsupported saved narration format in {path.name}")
+                if sample_rate is None:
+                    sample_rate = rate
+                    writer.setframerate(rate)
+                pcm = source.readframes(frames)
+                if not frames or len(pcm) != 2 * frames:
+                    raise RuntimeError(f"Incomplete narration recording in {path.name}")
+
+            def transcribe():
+                nonlocal model
+                try:
+                    import numpy as np
+                    from faster_whisper import WhisperModel
+                except ImportError as exc:
+                    raise RuntimeError("Install the updated requirements on the editing host, then retry the saved edit.") from exc
+                if model is None:
+                    model = WhisperModel("base", device="cpu", compute_type="int8", cpu_threads=4,
+                                         download_root=str(store.DATA / "_narration-alignment"))
+                converted = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-ar", "16000",
+                                            "-ac", "1", "-f", "f32le", "pipe:1"], capture_output=True, check=True)
+                segments, _ = model.transcribe(np.frombuffer(converted.stdout, dtype="<f4"), language="hi",
+                                               initial_prompt=" ".join(line["text"] for line in group),
+                                               word_timestamps=True, vad_filter=False, beam_size=5,
+                                               condition_on_previous_text=False)
+                return [dict(word=w.word, start=w.start, end=w.end) for seg in segments for w in seg.words or []]
+
+            try:
+                local = aligned_spans(path.with_suffix(".words.json"), group, frames / rate, transcribe)
+            except ValueError as exc:
+                raise RuntimeError(f"Editing paragraph {index}, scenes {group[0]['id']}–{group[-1]['id']}: {exc}") from exc
+            edges = [0] + [round(span["end"] * rate) for span in local[:-1]] + [frames]
+            for span, start, end in zip(local, edges, edges[1:]):
+                target = output / f"narration-{span['id']}.wav"
+                partial = target.with_suffix(".partial.wav")
+                with wave.open(str(partial), "wb") as part:
+                    part.setparams((1, 2, rate, 0, "NONE", "not compressed"))
+                    part.writeframes(pcm[2*start:2*end])
+                partial.replace(target)
+                spans.append(dict(id=span["id"], start=(cursor+start)/rate, end=(cursor+end)/rate))
+            writer.writeframes(pcm)
+            cursor += frames
+    master.replace(output / "narration-master.wav")
+    store.save(output / "narration-timing.json", dict(version=VERSION, key=key, lines=lines,
+               sample_rate=sample_rate, duration=cursor/sample_rate, spans=spans))
+
+
+def produce_clone(remote, folder, shots, check, progress, assets):
+    missing = pending_rental_audio(folder, shots)
     if not missing:
         return
     if not re.fullmatch(r"[a-f0-9]{32}", folder.name) or any(
@@ -142,7 +224,7 @@ def produce_clone(remote, folder, shots, check, progress, assets):
         remote.push([reference, manifest, worker, assets / "voice_clone.py",
                      Path(__file__).with_name("narration_layout.py")])
     progress("Generating continuous Hindi narration with natural sentence pauses", 52)
-    # Paragraph checkpoints are retained remotely; retry alignment without resynthesizing speech.
+    # Keep the remote directory compatible with older interrupted narration runs.
     try:
         remote.phase("bash worker.sh voice narrator-input.json >results/narrator.log 2>&1",
                      600 + 30 * len(shots))
@@ -164,15 +246,14 @@ def produce_clone(remote, folder, shots, check, progress, assets):
         except (RuntimeError, TimeoutError, OSError):
             pass
         raise RuntimeError(message) from exc
-    files = [f"narration-{s['id']}.wav" for s in shots if narrator_line(s)]
-    remote.pull([*files, "narration-master.wav"], output, subdir=directory)
-    if any(not readable_voice(output / name) for name in [*files, "narration-master.wav"]):
-        raise RuntimeError("A cloned narrator artifact is unreadable; saved paragraphs remain available for retry.")
-    # Completion is pulled last so an interrupted transfer cannot mark the job complete.
-    remote.pull(["narration-timing.json"], output, subdir=directory)
-    if pending_clone(folder, shots):
-        raise RuntimeError("The continuous narrator checkpoint does not match this script.")
-    progress("Continuous Hindi narration and speech timestamps saved", 53)
+    for path, _ in raw_paragraphs(folder, lines, key):
+        check()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not readable_voice(path):
+            remote.pull([path.name], path.parent, subdir=directory)
+        if not readable_voice(path):
+            raise RuntimeError(f"Unreadable saved narration recording: {path.name}")
+    progress("Hindi recordings saved for alignment during editing", 53)
 
 
 def produce(folder, shots, check, progress):

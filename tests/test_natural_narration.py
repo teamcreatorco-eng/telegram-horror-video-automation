@@ -141,7 +141,7 @@ def test_missing_split_is_restored_from_master_without_a_gpu(tmp_path, monkeypat
     assert abs(media.duration(output / 'narration-002.wav') - 1.2) < .01
 
 
-def test_continuous_job_sends_full_script_and_pulls_completion_last(tmp_path, monkeypatch):
+def test_raw_recordings_skip_rerental_and_split_losslessly_on_editor(tmp_path, monkeypatch):
     from app.narration_layout import VERSION
     monkeypatch.setenv('RAGHU_NARRATION_PROVIDER', 'chatterbox')
     folder = tmp_path / ('a' * 32)
@@ -163,18 +163,31 @@ def test_continuous_job_sends_full_script_and_pulls_completion_last(tmp_path, mo
             manifest = store.read(folder / 'narrator-input.json')
             assert len(manifest['lines']) == 3
             assert manifest['lines'][1]['speaker'] == 'NARRATOR'
-            for name, seconds in [('narration-001.wav', 1), ('narration-002.wav', 1),
-                                  ('narration-003.wav', 1), ('narration-master.wav', 3)]:
-                media.tone(remote_files / name, seconds, 'none')
-            store.save(remote_files / 'narration-timing.json', dict(version=VERSION, key=manifest['key'],
-                spans=[dict(id='001', start=0, end=1), dict(id='002', start=1, end=2),
-                       dict(id='003', start=2, end=3)]))
+            media.tone(remote_files / 'paragraph-000.wav', 3, 'none')
         def pull(self, files, destination, **kwargs):
             pulls.append(files)
             for name in files:
                 shutil.copyfile(remote_files / name, destination / name)
     raghu_narration.produce_clone(Remote(), folder, shots, lambda: None, lambda *_: None, raghu_pipeline.ASSETS)
-    assert pulls[-1] == ['narration-timing.json']
+    assert pulls == [['paragraph-000.wav']]
+    assert raghu_narration.pending_rental_audio(folder, shots) == []
+    output = raghu_narration.clone_folder(folder)
+    assert not (output / 'narration-timing.json').exists()
+    raw = next(output.glob('raw-*/paragraph-000.wav'))
+    original = raw.read_bytes()
+    words = [dict(word=shot['narration'], start=i+.1, end=i+.9) for i, shot in enumerate(shots)]
+    def mismatch(*args):
+        raise ValueError("Narration word timestamps do not match the script")
+    with monkeypatch.context() as patch:
+        patch.setattr(raghu_narration, "aligned_spans", mismatch)
+        with pytest.raises(RuntimeError, match="Editing paragraph 1"):
+            raghu_narration.align_recordings(folder, shots, lambda: None, lambda *_: None)
+    assert raghu_narration.pending_rental_audio(folder, shots) == []
+    store.save(raw.with_suffix('.words.json'), words)
+    raghu_narration.align_recordings(folder, shots, lambda: None, lambda *_: None)
+    assert raw.read_bytes() == original
+    with wave.open(str(raw)) as source, wave.open(str(output / 'narration-master.wav')) as master:
+        assert master.readframes(master.getnframes()) == source.readframes(source.getnframes())
     assert raghu_narration.pending_clone(folder, shots) == []
     raghu_narration.produce_clone(None, folder, shots, lambda: None, lambda *_: None, raghu_pipeline.ASSETS)
 

@@ -5,9 +5,12 @@ In Codex, say **“Clone this repository”** and paste its GitHub URL. After op
 ## 1. Pick where the bot runs
 
 - **Localhost.** Install Python 3.11, FFmpeg (including FFprobe) and the OpenSSH client. From the repo, run `python -m pip install -r requirements.txt vastai==1.9.1`. Copy `.env.raghu.example` to `.env`. Run `python run.py` after entering credentials. The default media is included. Keep that process and the computer running when you use Telegram. Keep the generated `data/` folder so jobs can resume.
+
 - **Railway.** In Railway, choose **New Project → Deploy from GitHub Repo** and select your fork. Keep one replica and attach a persistent volume at `/data`. Copy the settings from `.env.raghu.example` into the service’s **Variables** tab. The Docker image installs Python, FFmpeg, OpenSSH and the Vast CLI. [Volumes](https://docs.railway.com/volumes)
 
-Both hosts use the same writer, motion model, voice clone and editor. AI image and video reviewers are disabled. Generated files are checked for readability before use. The AI weights are downloaded to the rented Vast GPU host in both modes. Localhost installs the controller and editing tools on your computer.
+Both hosts use the same writer, motion model, voice clone and editor. AI image and video reviewers are disabled. Generated files are checked for readability before use. The image, motion, and voice-generation weights are downloaded to the rented Vast GPU host in both modes. Localhost installs the controller and editing tools on your computer.
+
+For cloned narration, Vast generates the paragraph recordings. After the clips and recordings are saved and rental cleanup finishes, the editing host aligns the Hindi speech on CPU. The first edit downloads the Whisper base model into `DATA_DIR/_narration-alignment`. Existing localhost installations should install the updated requirements before restarting the bot. A timing-only retry reuses the saved recordings and clips.
 
 ### Image-model downloads and recovery
 

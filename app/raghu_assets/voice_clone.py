@@ -13,7 +13,7 @@ from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 from huggingface_hub import snapshot_download
 
 from common import ROOT, event
-from narration_layout import VERSION, paragraph_groups, aligned_spans
+from narration_layout import paragraph_groups
 
 
 def main():
@@ -39,10 +39,6 @@ def main():
     model = ChatterboxMultilingualTTS.from_local(weights, device="cuda", t3_model="v3")
     # Keep one voice conditioning for the whole job instead of reloading it per shot.
     model.prepare_conditionals(str(reference), exaggeration=.46)
-    from faster_whisper import WhisperModel
-    aligner = WhisperModel("base", device="cpu", compute_type="int8", cpu_threads=4,
-                           download_root=str(ROOT / "hf-cache" / "narration-alignment"))
-    complete_audio, spans, cursor = [], [], 0
     for index, group in enumerate(groups):
         target = output / f"paragraph-{index:03}.wav"
         start = time.monotonic()
@@ -74,40 +70,7 @@ def main():
             wav, _ = sf.read(target, dtype="float32")
             event("narrator_paragraph_ready", index=index, seconds=time.monotonic() - start,
                   duration=len(wav) / model.sr, lines=[line["id"] for line in group])
-        duration = len(wav) / model.sr
-        def transcribe():
-            # Whisper array input is mono 16 kHz. Keep the mastered WAV at its native rate.
-            from math import gcd
-            from scipy.signal import resample_poly
-            factor = gcd(model.sr, 16000)
-            samples = resample_poly(wav, 16000 // factor, model.sr // factor).astype(np.float32, copy=False)
-            segments, _ = aligner.transcribe(samples, language="hi", word_timestamps=True,
-                                             initial_prompt=" ".join(line["text"] for line in group),
-                                             vad_filter=False, beam_size=5, condition_on_previous_text=False)
-            return [dict(word=w.word, start=w.start, end=w.end) for segment in segments for w in segment.words or []]
-        local = aligned_spans(words_file, group, duration, transcribe)
-        # A failed alignment leaves paragraph WAV intact for the next retry.
-        edges = [0] + [round(span["end"] * model.sr) for span in local[:-1]] + [len(wav)]
-        for i, span in enumerate(local):
-            path = output / f"narration-{span['id']}.wav"
-            part = path.with_suffix(".partial.wav")
-            sf.write(part, wav[edges[i]:edges[i + 1]], model.sr, subtype="PCM_16")
-            part.replace(path)
-            spans.append(dict(id=span["id"], start=(cursor + edges[i]) / model.sr,
-                              end=(cursor + edges[i + 1]) / model.sr))
-        complete_audio.append(wav)
-        cursor += len(wav)
-    master = output / "narration-master.wav"
-    partial = master.with_suffix(".partial.wav")
-    sf.write(partial, np.concatenate(complete_audio), model.sr, subtype="PCM_16")
-    partial.replace(master)
-    timing = output / "narration-timing.json"
-    partial = timing.with_suffix(".partial.json")
-    partial.write_text(json.dumps(dict(version=VERSION, key=manifest["key"], lines=manifest["lines"],
-                                      sample_rate=model.sr, duration=cursor/model.sr, spans=spans),
-                                  ensure_ascii=False), encoding="utf-8")
-    partial.replace(timing)
-    event("narrator_story_ready", paragraphs=len(groups), duration=cursor/model.sr)
+    event("narrator_recordings_ready", paragraphs=len(groups))
 
 
 if __name__ == "__main__":

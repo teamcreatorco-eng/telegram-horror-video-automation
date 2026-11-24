@@ -53,10 +53,6 @@ case "$1" in
         pykakasi soundfile pyloudnorm omegaconf
       touch voice-env/.ready
     fi
-    if [ ! -f voice-env/.alignment-ready ]; then
-      python -m pip --python voice-env/bin/python install faster-whisper==1.2.1
-      touch voice-env/.alignment-ready
-    fi
     voice-env/bin/python voice_clone.py "$2"
     ;;
   prepare-motion|motion)

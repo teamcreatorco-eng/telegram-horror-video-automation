@@ -825,7 +825,7 @@ def generate(folder, ident, shot_plan, check, progress):
     except GeminiUnavailable:
         recover_reviews(progress, 42)
     missing = [shot for shot in shots if not approved_motion(shot)]
-    if not missing and not raghu_narration.pending_clone(folder, shots):
+    if not missing and not raghu_narration.pending_rental_audio(folder, shots):
         journal=folder/'raghu-rental.json'
         if journal.is_file() and not store.read(journal).get('destroyed'):
             from .raghu_vast import finish_rental
@@ -873,7 +873,7 @@ def generate(folder, ident, shot_plan, check, progress):
                 progress_at("Vast GPU stopped · retrying review on saved work", phase)
                 recover_reviews(progress_at, phase)
                 missing = [shot for shot in shots if not approved_motion(shot)]
-                if not missing and not raghu_narration.pending_clone(folder, shots):
+                if not missing and not raghu_narration.pending_rental_audio(folder, shots):
                     return
                 remote.resume_after_review(time.monotonic() - parked_at)
             except (VastConnectionLost, RenderReviewNeedsRetake) as exc:
@@ -1188,8 +1188,7 @@ def narration(folder, shots, check, progress):
     if raghu_narration.silent():
         return
     if raghu_narration.uses_clone():
-        if raghu_narration.pending_clone(folder, shots):
-            raise RuntimeError("Some cloned narrator lines are missing. Retry the saved narration stage.")
+        raghu_narration.align_recordings(folder, shots, check, progress)
         dialogue = [shot for shot in shots if not raghu_narration.narrator_line(shot)]
         if dialogue:
             raghu_narration.produce(raghu_narration.narrator_folder(folder), dialogue, check, progress)
@@ -1445,7 +1444,7 @@ def work(ident, folder, request, check, progress):
     else:
         generate(folder, ident, shot_plan, check, progress)
     progress("Vast closed · preparing silent video" if raghu_narration.silent()
-             else "Vast closed. Generating Hindi narration", 80)
+             else "Vast closed. Preparing Hindi narration for editing", 80)
     narration(folder, shot_plan["shots"], check, progress)
     progress("Editing the silent video" if raghu_narration.silent()
              else "Editing picture to narration", 90)
