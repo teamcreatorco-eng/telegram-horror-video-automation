@@ -79,8 +79,14 @@ def model_manifest(quantization):
 
 def cost_workload_key(quantization, model):
     # Include runtime/setup source as well as every model hash, without altering workers.
-    files = ['videos.py', 'worker.sh', 'common.py', 'download_video_only.py', 'motion_runtime.py']
-    runtime = json.dumps({name: (ASSETS / name).read_bytes().hex() for name in files}, sort_keys=True).encode()
+    files = ['videos.py', 'worker.sh', 'common.py', 'download_video_only.py', 'motion_runtime.py',
+             'phase-timing.py', 'stills.py', 'qwen_stills.py', 'voice_clone.py',
+             'qwen-model-manifest.json']
+    sources = {name: (ASSETS / name).read_bytes().hex() for name in files}
+    sources['narration_layout.py'] = Path(__file__).with_name('narration_layout.py').read_bytes().hex()
+    runtime = json.dumps(dict(sources=sources, image_model=image_model(),
+                              narration=os.getenv('RAGHU_NARRATION_PROVIDER', 'gemini').lower()),
+                         sort_keys=True).encode()
     conditioning = b'paired' if uses_ending_image() else b'opening-only'
     return raghu_cost.workload_key(model_manifest(quantization), RUNTIME_IMAGE.encode() + conditioning + runtime, quantization, model)
 
@@ -447,6 +453,17 @@ class Remote:
         self.recovery_attempted = False
         self.journal = None
 
+    def operation_event(self, program, started, status):
+        if self.journal is None:
+            return
+        try:
+            row = dict(time=time.time(), program=program, seconds=time.monotonic()-started,
+                       status=status)
+            with (self.journal.parent / "rental-operations.jsonl").open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(row) + "\n")
+        except OSError:
+            logging.warning("Could not save rental operation timing")
+
     def command(self, program, args, seconds=60, source=None):
         options = ["-F", "none", "-i", str(self.key), "-o", "BatchMode=yes",
                    "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=8",
@@ -455,6 +472,7 @@ class Remote:
                    "-o", f"UserKnownHostsFile={self.temp / 'known_hosts'}"]
         port_flag = "-P" if program == "scp" else "-p"
         until = min(time.monotonic() + seconds, self.deadline)
+        started = time.monotonic()
         with tempfile.TemporaryFile() as errors, subprocess.Popen(
             [program, *options, port_flag, str(self.port), *args],
             stdin=source if source is not None else subprocess.DEVNULL,
@@ -477,6 +495,8 @@ class Remote:
             finally:
                 if process.poll() is None:
                     process.kill()
+                    process.wait()
+                self.operation_event(program, started, process.returncode)
 
     def stop_for_recovery(self):
         state = store.read(self.journal)
@@ -524,6 +544,7 @@ class Remote:
         self.restart_preserved(state)
 
     def restart_preserved(self, state):
+        self.uploaded_result_images = {}
         require_resume_credit()
         ident = state["id"]
         try:
@@ -541,8 +562,10 @@ class Remote:
                         except (RuntimeError, TimeoutError):
                             continue
                         self.host, self.port = endpoint.host, endpoint.port
-                        store.save(self.journal, {key: value for key, value in state.items()
-                                                  if key not in ("recovery_stop", "stopped_at")})
+                        resumed = {key: value for key, value in state.items()
+                                   if key not in ("recovery_stop", "stopped_at")}
+                        resumed['resume_count'] = int(state.get('resume_count', 0)) + 1
+                        store.save(self.journal, resumed)
                         return
                 time.sleep(3)
             raise RuntimeError(f"Vast instance {ident} could not restart. Its disk has been preserved.")
@@ -783,7 +806,7 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
             try:
                 worker=temp/'worker.sh'
                 worker.write_text((ASSETS/'worker.sh').read_text(encoding='utf-8-sig'),encoding='utf-8',newline='\n')
-                remote.push([worker,*[ASSETS/name for name in ('stills.py','videos.py','wan_worker.py','motion_recovery.py',"image_download.py","motion_runtime.py")]])
+                remote.push([worker,*[ASSETS/name for name in ('common.py','phase-timing.py','stills.py','videos.py','wan_worker.py','motion_recovery.py',"image_download.py","motion_runtime.py")]])
                 token=os.getenv('HF_TOKEN','').strip()
                 if token:
                     hf=temp/'.env'
@@ -846,7 +869,11 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
             label += f"-replacement-{replacement_for}" if recovery_state.get("user_recovery") else "-replacement"
         if journal.is_file() and store.read(journal).get("creation_uncertain"):
             raise RuntimeError("Previous rental outcome is uncertain. Check Vast instances before retrying; no new rental submitted.")
-        state = {"label": label, "id": None, "destroyed": False}
+        cached_assets = (any(folder.glob("character-*.png")) or any(folder.glob("background-*.png"))
+                         or any(folder.glob("still-*.png")) or any((folder / "narration-clone").glob("**/*.wav")))
+        state = {"label": label, "id": None, "destroyed": False,
+                 "setup_scope": "saved-assets" if cached_assets else "cold-assets",
+                 "narration_provider": os.getenv("RAGHU_NARRATION_PROVIDER", "gemini").lower()}
         if recovery.is_file():
             state["recovery_stop"] = True
         if any(row.get("label") == state["label"] for row in instances()):
@@ -977,7 +1004,7 @@ def _rent_once(folder, ident, check, *, progress, image_only=False, pending_shot
             runtime.write_text(f"export LTX_QUANTIZATION={quantization}\nexport RAGHU_MOTION_MODEL={model}\n"
                                f"export RAGHU_IMAGE_MODEL={still_model}\n",
                                encoding="ascii", newline="\n")
-            remote.push([worker, model_file, runtime, *[ASSETS / name for name in ("common.py", "stills.py", "image_download.py", "motion_runtime.py", "videos.py", "motion_recovery.py",
+            remote.push([worker, model_file, runtime, *[ASSETS / name for name in ("common.py", "phase-timing.py", "stills.py", "image_download.py", "motion_runtime.py", "videos.py", "motion_recovery.py",
                 "download_video_only.py", "wan_worker.py", "wan_setup.py",
                 "qwen_stills.py", "qwen-model-manifest.json", "hunyuan_worker.py", "hunyuan-model-manifest.json",
                 "style-wide.jpg", "style-interior.jpg")]])

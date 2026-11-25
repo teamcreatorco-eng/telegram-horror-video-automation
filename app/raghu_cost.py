@@ -84,6 +84,36 @@ def summarize_events(events):
                 qualifiable=bool(valid and sessions == 1 and set(starts) == set(done) and len(warm) >= 3))
 
 
+def measured_setup(events):
+    """Worker wall time less measured inference; incomplete phases remain unknown."""
+    starts, done = {}, {}
+    phases = {'stills', 'voice', 'prepare-motion'}
+    inference = 0
+    for row in events:
+        if row.get('stage') in ('still_done', 'narrator_paragraph_ready'):
+            inference += number(row['seconds'])
+        if row.get('phase') not in phases:
+            continue
+        ident = row.get('phase_id')
+        if not ident:
+            return None
+        if row.get('stage') == 'worker_phase_start':
+            if ident in starts:
+                return None
+            starts[ident] = row
+        elif row.get('stage') == 'worker_phase_done':
+            if ident not in starts or ident in done or row.get('exit_code') != 0:
+                return None
+            start = starts[ident]
+            if start['phase'] != row['phase'] or number(row['time']) < number(start['time']):
+                return None
+            done[ident] = number(row['seconds'])
+    if not starts or set(starts) != set(done) or not any(
+            row['phase'] == 'prepare-motion' for row in starts.values()):
+        return None
+    return max(0, sum(done.values()) - inference)
+
+
 def host_signature(offer):
     if any(offer.get(k) is None for k in HOST_FIELDS):
         return None
@@ -121,13 +151,22 @@ def measured_seconds(records, offer, key, now):
 
 def offer_cost(offer, records, key, clips, overhead_seconds, download_gb, upload_gb, now):
     row = _observation(records, offer, key, now)
-    seconds = row['warm_p90_seconds'] if row else 70
+    seconds = row['warm_p90_seconds'] if row else 77
+    setup_basis = 'unmeasured_estimate'
+    if row and row.get('total_setup_seconds') is not None:
+        try:
+            measured = number(row['total_setup_seconds'])
+            if measured > 0:
+                generation = number(row.get('nonmotion_seconds_per_clip', 0)) * clips
+                overhead_seconds, setup_basis = measured + generation, 'measured_complete_setup'
+        except (ValueError, TypeError):
+            pass
     first_extra = max(0, row['first_seconds'] - seconds) if row and clips else 0
     result = estimate_cost(float(offer['dph_total']), clips, seconds, overhead_seconds + first_extra,
                            download_gb, float(offer['inet_down_cost']),
                            upload_gb, float(offer['inet_up_cost']))
     return dict(result, seconds_per_clip=seconds, first_clip_extra_seconds=first_extra,
-                speed_basis='measured_host_warm_p90' if row else 'unmeasured_estimate',
+                speed_basis='measured_host_warm_p90' if row else 'unmeasured_estimate', setup_basis=setup_basis,
                 exclusions=['writing/API fees', 'Railway editing/hosting allocation', 'taxes',
                             'unplanned retries', 'post-stop storage'])
 
@@ -167,14 +206,44 @@ def record_rental_cost(folder, catalog_path, now):
     catalog_file.unlink(missing_ok=True)
     if not (folder / 'events.jsonl').is_file():
         return None
-    rows = [json.loads(line) for line in (folder / 'events.jsonl').read_text(encoding='utf-8').splitlines() if line.strip()]
+    rows, corrupt_events = [], False
+    for line in (folder / 'events.jsonl').read_text(encoding='utf-8').splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+            if not isinstance(row, dict):
+                raise ValueError('Invalid event')
+            rows.append(row)
+        except ValueError:
+            corrupt_events = True
     missing_time = any(row.get('time') is None for row in rows if row.get('stage') in ('video_model_ready','video_start','video_done'))
     rows = [row for row in rows if row.get('time') is not None and number(row['time']) >= state['started']]
     summary = summarize_events(rows)
+    summary['worker_setup_seconds'] = measured_setup(rows)
     ready = [row for row in rows if row.get('stage') == 'video_model_ready']
     compatible = all(row.get('resolution') == [1280,768] and row.get('steps') == [8,3]
                      and row.get('quantization') == state.get('quantization') for row in ready)
-    summary['qualifiable'] = summary['qualifiable'] and compatible and not missing_time
+    summary['qualifiable'] = summary['qualifiable'] and compatible and not missing_time and not corrupt_events
+    # One wall-clock boundary avoids adding transfers that overlap worker setup.
+    # Resumed rentals may contain unbilled stopped time, so cannot qualify here.
+    image_and_voice = sum(number(row['seconds']) for row in rows
+                          if row.get('stage') in ('still_done', 'narrator_paragraph_ready'))
+    first_start = min((row['time'] for row in rows if row.get('stage') == 'video_start'), default=None)
+    total_setup = None
+    completed_phases = {row.get('phase') for row in rows
+                        if row.get('stage') == 'worker_phase_done' and row.get('exit_code') == 0}
+    required_phases = {'stills', 'prepare-motion'}
+    if state.get('narration_provider') == 'chatterbox':
+        required_phases.add('voice')
+    if (summary['worker_setup_seconds'] is not None and first_start is not None
+            and state.get('setup_scope') == 'cold-assets' and required_phases <= completed_phases
+            and not state.get('resume_count')):
+        total_setup = max(0, first_start - state['started'] - image_and_voice)
+    summary['total_setup_seconds'] = total_setup
+    summary['nonmotion_seconds_per_clip'] = image_and_voice / summary['clips'] if total_setup is not None and summary['clips'] else None
+    if state.get('resume_count'):
+        summary['qualifiable'] = False
     measured_at = max((row['time'] for row in rows if row.get('stage') == 'video_done'), default=0)
     elapsed = max(0, number(now) - number(state['started']))
     result = dict(summary, measured_at=measured_at, host_signature=state['host_signature'],

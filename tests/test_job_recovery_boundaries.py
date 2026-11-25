@@ -117,6 +117,7 @@ def test_uploads_only_this_batch_of_references(tmp_path):
     remote = SimpleNamespace(push=lambda paths: calls.append([p.name for p in paths]),
                              phase=lambda cmd, seconds: calls.append(cmd))
     raghu_pipeline.upload_saved_images(remote, [])
+    (tmp_path / "background-HALL.png").write_bytes(b"reference")
     raghu_pipeline.upload_saved_images(remote, [tmp_path / "background-HALL.png"])
     assert calls == [["background-HALL.png"], "mv -- background-HALL.png results/"]
 

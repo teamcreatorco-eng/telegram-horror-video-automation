@@ -131,3 +131,20 @@ guidance, not rejection gates. JSON fields, asset references, scene ordering,
 credentials, and readable media files are still checked because later stages
 need them to run. Malformed responses can be retried; these are format repairs,
 not creative review. Generated content proceeds directly to rendering and editing.
+
+
+### Rental timing and estimates
+Each worker invocation writes phase start/end events and an exit code. Local
+rental-operations.jsonl records SSH/SCP durations without command arguments or secrets.
+Motion events are refreshed every six clips and each batch end. Failed/partial logs
+remain diagnostic evidence and cannot qualify a host as fast.
+Completed uninterrupted matching workloads may use measured setup cost. Setup uses
+the wall interval from rental creation to first render, with image/voice compute
+tracked separately; overlapping transfers are not summed twice. A resumed rental's
+stopped interval is unsuitable for performance qualification. The workload identity
+includes image and narration configuration as well as the motion recipe.
+Unknown hosts retain an explicit estimate (77 seconds per clip, 25 minutes overhead).
+The bot still ranks compatible hosts by estimated complete job cost without a cap.
+Unchanged reference files are reused only inside the same live connection. A restart
+clears the cache. These changes require an actual production measurement to establish
+savings; they do not demonstrate a $1.50 total or identify the historical setup gap.

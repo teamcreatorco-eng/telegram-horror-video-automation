@@ -66,7 +66,7 @@ def test_more_expensive_hourly_host_can_win_complete_job_cost():
 
 def test_unknown_speed_is_explicit_estimate():
     result=offer_cost(offer(), [], 'approved', 120, 600, 48, 4, 110)
-    assert result['seconds_per_clip'] == 70
+    assert result['seconds_per_clip'] == 77
     assert result['speed_basis'] == 'unmeasured_estimate'
 
 

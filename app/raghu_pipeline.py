@@ -736,7 +736,7 @@ def validate_motion(folder, shot, next_shot=None):
 
 def generation_preflight(shot_plan):
     # Check install-time dependencies before entering a paid rental.
-    names = ["worker.sh", "common.py", "stills.py", "videos.py", "motion_runtime.py",
+    names = ["worker.sh", "common.py", "phase-timing.py", "stills.py", "videos.py", "motion_runtime.py",
              "motion_recovery.py", "download_video_only.py", "model-manifest.json",
              "style-wide.jpg", "style-interior.jpg", "wan_worker.py", "wan_setup.py",
              "qwen_stills.py", "qwen-model-manifest.json", "hunyuan_worker.py",
@@ -986,10 +986,19 @@ def collect_motion_events(remote, folder):
 
 
 def upload_saved_images(remote, files):
+    # Cache only successful moves into results/ within this live connection.
+    cached = getattr(remote, "uploaded_result_images", {})
     for index in range(0, len(files), 12):
-        batch = files[index:index + 12]
+        fingerprints = {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                        for path in files[index:index+12]}
+        batch = [path for path in files[index:index+12]
+                 if cached.get(path.name) != fingerprints[path.name]]
+        if not batch:
+            continue
         remote.push(batch)
         remote.phase("mv -- " + shlex.join([path.name for path in batch]) + " results/", 60)
+        cached.update({path.name: fingerprints[path.name] for path in batch})
+        remote.uploaded_result_images = cached
 
 
 def animate_stills(remote, folder, missing, successors, check, progress):
@@ -1102,6 +1111,8 @@ def render_motion_queue(remote, folder, shots, successors, check, progress):
                          "ps -p $(cat motion.pid) -o stat= | grep -q '^[^Z]' || exit 1; "
                          "sleep 2; done", 1800 if motion_model() == "hunyuan15" else 900 if motion_model() == "wan22" else 600)
             remote.pull([clip], folder)
+            if (index + 1) % 6 == 0 or index == len(batch) - 1:
+                collect_motion_events(remote, folder)
             reviews.append(pool.submit(validate_motion, folder, shot, successors.get(shot["id"])))
         started = time.monotonic()
         failed = {shot["id"]: result["reason"] for shot, future in zip(batch, reviews)

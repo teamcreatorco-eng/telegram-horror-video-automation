@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
+# Keep diagnostics optional and record only the phase name, never credentials or prompts.
+phase_name="${1:-unknown}"
+phase_id="$$-$(date +%s)"
+phase_started="$(python -c 'import time; print(time.monotonic())' 2>/dev/null || echo 0)"
+python phase-timing.py start "$phase_name" "$phase_id" "$phase_started" || true
+finish_phase() {
+  phase_exit=$?
+  python phase-timing.py done "$phase_name" "$phase_id" "$phase_started" "$phase_exit" || true
+  exit "$phase_exit"
+}
+trap finish_phase EXIT
 if [ -f runtime.sh ]; then
   source runtime.sh
 fi
