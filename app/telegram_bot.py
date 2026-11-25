@@ -227,23 +227,62 @@ class Service:
         if not allowed(uid,cid):return
         raghu = os.getenv('MEDIA_BACKEND', '').lower() == 'raghu'
         if command == '/start' and raghu:
-            self.api.call('sendMessage', {'chat_id': cid, 'text': 'Tap Generate or send a story title.',
-                          'reply_markup': {'keyboard': [[{'text': 'Generate'}]], 'resize_keyboard': True}})
+            self.api.call('sendMessage', {'chat_id': cid, 'text': 'Choose how to create your video, or send a story title.',
+                          'reply_markup': {'keyboard': [[{'text': 'Generate from scratch'}, {'text': 'Use my script'}]], 'resize_keyboard': True}})
             return
         if command in ('/start','/id'):
             self.api.text(cid,HELP)
             return
-        if raghu and text.casefold() == 'generate':
+        if raghu and text.casefold() in ('generate', '/generate'):
+            self.api.call('sendMessage', {'chat_id': cid, 'text': 'How would you like to create this video?',
+                          'reply_markup': {'keyboard': [[{'text': 'Generate from scratch'}, {'text': 'Use my script'}]],
+                                           'resize_keyboard': True}})
+            return
+        scratch_selected = raghu and text.casefold() == 'generate from scratch'
+        if scratch_selected:
             text = command = '/generate'
         draft_key = (self.bot, str(cid), str(uid))
         pending = None
         duration = None
         if raghu:
+            if scratch_selected:
+                with store.db() as c:
+                    c.execute('DELETE FROM telegram_duration_requests WHERE bot=? AND chat_id=? AND user_id=?', draft_key)
             with store.db() as c:
                 draft = c.execute("SELECT request FROM telegram_duration_requests "
                                   "WHERE bot=? AND chat_id=? AND user_id=?", draft_key).fetchone()
             if draft:
                 pending = json.loads(draft[0])
+            if text.casefold() == 'use my script':
+                with store.db() as c:
+                    c.execute("INSERT INTO telegram_duration_requests(bot,chat_id,user_id,request) VALUES (?,?,?,?) ON CONFLICT(bot,chat_id,user_id) DO UPDATE SET request=excluded.request",
+                              (*draft_key, json.dumps({'awaiting_script_input': True})))
+                self.api.text(cid, 'Paste your script here. You can send it in several messages. Send /done when you have finished, or /cancel to cancel.')
+                return
+            if pending and pending.get('awaiting_script_input') and text.casefold() != '/cancel':
+                if command == '/done':
+                    script = pending.get('supplied_script', '').strip()
+                    if not script:
+                        self.api.text(cid, 'Paste your script first, then send /done.')
+                        return
+                    request = Request(title='Your supplied story', language=os.getenv('TELEGRAM_LANGUAGE','Hindi'),
+                                      mode=os.getenv('TELEGRAM_PRODUCTION_MODE','live')).model_dump()
+                    request['supplied_script'] = script
+                    with store.db() as c:
+                        c.execute("UPDATE telegram_duration_requests SET request=? WHERE bot=? AND chat_id=? AND user_id=?",
+                                  (json.dumps(request, ensure_ascii=False), *draft_key))
+                    self.ask_duration(cid)
+                    return
+                if command.startswith('/'):
+                    self.api.text(cid, 'Paste the script, send /done to continue, or /cancel.')
+                    return
+                pending['supplied_script'] = (pending.get('supplied_script', '') + '\n' + text).strip()
+                with store.db() as c:
+                    c.execute("UPDATE telegram_duration_requests SET request=? WHERE bot=? AND chat_id=? AND user_id=?",
+                              (json.dumps(pending, ensure_ascii=False), *draft_key))
+                self.api.text(cid, 'Script saved. Send more text or /done to continue.')
+                return
+            if draft:
                 if text.casefold() == "/cancel":
                     with store.db() as c:
                         c.execute("DELETE FROM telegram_duration_requests WHERE bot=? AND chat_id=? AND user_id=?", draft_key)
@@ -453,7 +492,7 @@ class Service:
                 self.ask_music(cid)
                 return
             request.setdefault('music_track', 'none')
-            if not planning_only:
+            if not planning_only and not request.get("supplied_script"):
                 request["script_options"] = True
         if request['mode']=='live' and smoke_mode != 'review' and os.getenv('ALLOW_PAID_GENERATION','false').lower()!='true':
             self.api.text(cid,'Live production is disabled in the deployment settings.');return
@@ -539,10 +578,15 @@ class Service:
         tracks = raghu_music.choices()
         self.api.text(cid, 'Choose the background music. Narration keeps the approved volume; these are short previews of each installed track.')
         for track in tracks:
-            with track['preview'].open('rb') as stream:
-                self.api.call('sendVideo', {'chat_id': cid, 'caption': track['title'],
-                              'supports_streaming': True}, files={'video': (
-                                  track['preview'].name, stream, 'video/mp4')})
+            with tempfile.TemporaryDirectory(prefix='music-sample-') as temp:
+                audio = track.get('audio_preview')
+                if audio is None:
+                    audio = Path(temp) / 'sample.mp3'
+                    media.ff('-i', track['preview'], '-t', '12', '-vn', '-c:a', 'libmp3lame', '-q:a', '3', audio)
+                with audio.open('rb') as stream:
+                    self.api.call('sendAudio', {'chat_id': cid, 'title': track['title'],
+                                  'caption': track['title']}, files={'audio': (
+                                      audio.name, stream, 'audio/mpeg')})
         self.api.call('sendMessage', {'chat_id': cid, 'text': 'Which track should this video use?',
                       'reply_markup': {'keyboard': [[{'text': t['title']}] for t in tracks]
                           + [[{'text': 'No music'}]], 'resize_keyboard': True, 'one_time_keyboard': True}})

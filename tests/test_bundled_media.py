@@ -43,7 +43,7 @@ def test_every_bundled_binary_matches_manifest_and_decodes():
     import hashlib,json
     from app import media
     manifest=json.loads((bundled_media.ROOT/'manifest.json').read_text())
-    assert len(manifest)==10
+    assert len(manifest)==14
     for name,entry in manifest.items():
         path=bundled_media.ROOT/name
         assert path.stat().st_size==entry['bytes']

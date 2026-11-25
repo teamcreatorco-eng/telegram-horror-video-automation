@@ -112,3 +112,5 @@ Voice cloning is enabled in the template. Keep the same course reference on loca
 - Send `/setup`. Fix missing variables and tools first. AI visual review is disabled and no Gemini review test is required.
 - When ready to spend on a first run, set `ALLOW_PAID_GENERATION=true`, restart the app, then tap **Generate → Other → 30 seconds**. The selected time is the full story. The opening video is added separately. Longer options give a complete story with a final payoff.
 - If a run stops, send `/status` and select **Retry this step**. The bot uses saved work and shows the reason if it needs you to fix credentials, budget, or provider access. See the [recovery guide](docs/raghu-railway.md).
+
+In Telegram, Generate offers **Generate from scratch** or **Use my script**. For your own story, paste it in one or more messages and send /done, then choose duration and music. The writer formats the supplied story into Hindi narration and stages it directly, without script-option approval. Music choices arrive as short audio samples.

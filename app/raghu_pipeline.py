@@ -1374,7 +1374,9 @@ def work(ident, folder, request, check, progress):
         intro = opening_path()
         if not raghu_narration.silent() and (not intro.is_file() or media.duration(intro) < 6):
             raise RuntimeError("Install the intro and disclaimer as a video of at least six seconds. No GPU was rented.")
-    if request.get("script_options") and saved is None and not planning_only:
+    if request.get("supplied_script") and saved is None:
+        store.save(folder / "supplied-script.json", {"text": request["supplied_script"]})
+    if request.get("script_options") and not request.get("supplied_script") and saved is None and not planning_only:
         store.save(folder / "script-choice-enabled.json", {"enabled": True})
     legacy_plan = folder / "raghu-plan.json"
     recover_legacy = saved is None and os.getenv("RAGHU_FINISH_FROM_SAVED") == ident and legacy_plan.is_file()

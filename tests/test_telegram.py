@@ -10,7 +10,7 @@ class FakeAPI:
     def call(self,method,fields=None,files=None):
         self.calls.append((method,fields,files is not None))
         if self.block_chat is not None and fields and str(fields.get('chat_id'))==str(self.block_chat):raise tg.BotError(403)
-        if method=='sendVideo' and self.fail_video:raise tg.BotError(uncertain=True)
+        if method in ('sendVideo','sendAudio') and self.fail_video:raise tg.BotError(uncertain=True)
         if method=='sendVideo':assert files['video'][1].read()
         return {'message_id':len(self.calls)}
     def text(self,chat,text):return self.call('sendMessage',{'chat_id':chat,'text':text})
@@ -26,13 +26,13 @@ def test_music_preview_choice_precedes_enqueue_and_is_owned(service, monkeypatch
     preview = tmp_path / 'preview.mp4'
     preview.write_bytes(b'preview')
     monkeypatch.setattr(raghu_music, 'choices', lambda: [dict(id='ghostly-piano',
-        title='Ghostly Piano Horror', preview=preview, file=tmp_path / 'music.mp3')])
+        title='Ghostly Piano Horror', preview=preview, audio_preview=preview, file=tmp_path / 'music.mp3')])
     queued=[]
     monkeypatch.setattr(pipeline,'enqueue',lambda ident:queued.append(ident) or True)
-    service.handle(update('/generate'))
+    service.handle(update('Generate from scratch'))
     service.handle(update('30 seconds',ident=2))
     assert not queued
-    assert any(call[0]=='sendVideo' for call in service.api.calls)
+    assert any(call[0]=='sendAudio' for call in service.api.calls)
     service.handle(update('Ghostly Piano Horror',uid=202,ident=3))
     assert not queued
     service.handle(update('Ghostly Piano Horror',ident=4))
@@ -49,8 +49,8 @@ def test_music_choice_survives_failed_preview_and_allows_no_music(service, monke
     monkeypatch.setenv('ALLOW_PAID_GENERATION','true')
     monkeypatch.setattr(raghu_pipeline,'production_credentials',lambda:None)
     preview=tmp_path/'preview.mp4';preview.write_bytes(b'preview')
-    monkeypatch.setattr(raghu_music,'choices',lambda:[dict(id='ghostly-piano',title='Ghostly Piano Horror',preview=preview)])
-    service.handle(update('/generate'))
+    monkeypatch.setattr(raghu_music,'choices',lambda:[dict(id='ghostly-piano',title='Ghostly Piano Horror',preview=preview,audio_preview=preview)])
+    service.handle(update('Generate from scratch'))
     service.api.fail_video=True
     with pytest.raises(tg.BotError):
         service.handle(update('30 seconds',ident=2))
@@ -84,9 +84,9 @@ def test_fresh_clone_sends_all_four_bundled_music_previews(service,monkeypatch):
     from app import bundled_media
     monkeypatch.setattr(bundled_media,'ROOT',Path(__file__).resolve().parents[1]/'app/course_assets')
     monkeypatch.setenv('MEDIA_BACKEND','raghu')
-    service.handle(update('/generate'))
+    service.handle(update('Generate from scratch'))
     service.handle(update('2 minutes',ident=2))
-    previews=[fields for method,fields,has_file in service.api.calls if method=='sendVideo']
+    previews=[fields for method,fields,has_file in service.api.calls if method=='sendAudio']
     assert len(previews)==4
     assert {r['caption'] for r in previews} == {
         'Ghostly Piano Horror','Midnight Graveyard Ambient',
@@ -118,7 +118,7 @@ def test_duration_ack_failure_happens_after_local_enqueue(service, monkeypatch):
     monkeypatch.setenv('TELEGRAM_PRODUCTION_MODE','live');monkeypatch.setenv('ALLOW_PAID_GENERATION','true')
     monkeypatch.setattr(raghu_pipeline,'production_credentials',lambda:None)
     queued=[];monkeypatch.setattr(pipeline,'enqueue',lambda ident:queued.append(ident) or True)
-    service.handle(update('/generate'))
+    service.handle(update('Generate from scratch'))
     original=service.api.call
     def call(method,fields=None,**kwargs):
         if method=='sendMessage' and fields['text'].startswith('Queued a'):raise tg.BotError(502)
@@ -177,7 +177,7 @@ def test_raghu_recovery_buttons_retry_only_the_chat_owned_job(service, monkeypat
     assert queued == [ident]
     assert store.read(store.folder(ident) / "raghu-user-retry.json")["round"]
     callback(101, "new", 4)
-    assert any(fields.get("text") == tg.DURATION_PROMPT for _, fields, _ in service.api.calls)
+    assert any('Use my script' in str(fields) for _, fields, _ in service.api.calls)
 
 
 def test_raghu_status_explains_operation_timeout_and_returns_recovery_buttons(service, monkeypatch):
@@ -410,7 +410,7 @@ def test_image_review_attachment_keeps_the_entire_railway_report(service, monkey
     ('Generate any type of video', True, 'Choose an original Hindi folk-horror topic'),
     ('Pick a topic yourself', True, 'Choose an original Hindi folk-horror topic'),
         ('pick any topic and start generating video', True, 'Choose an original Hindi folk-horror topic'),
-    ('/generate', True, 'Choose an original Hindi folk-horror topic'),
+    ('Generate from scratch', True, 'Choose an original Hindi folk-horror topic'),
     ('/generate The Old Well', False, 'The Old Well'),
     ('The Gate That Would Not Shut', False, 'The Gate That Would Not Shut'),
 ])
@@ -438,7 +438,7 @@ def test_raghu_asks_duration_before_queuing_full_production(service, monkeypatch
     monkeypatch.setenv("TELEGRAM_PRODUCTION_MODE", "live")
     monkeypatch.setenv("ALLOW_PAID_GENERATION", "true")
     monkeypatch.setattr(raghu_pipeline, "production_credentials", lambda: None)
-    service.handle(update("/generate"))
+    service.handle(update("Generate from scratch"))
     assert store.all_jobs() == []
     keyboard = service.api.calls[-1][1]["reply_markup"]["keyboard"][0]
     assert {item["text"] for item in keyboard} == set(tg.DURATION_CHOICES)
@@ -517,3 +517,24 @@ def test_images_available_without_local_worker_folder(service, monkeypatch):
     monkeypatch.setattr(storage, 'client', lambda: SimpleNamespace(download_file=lambda bucket, key, path: Path(path).write_bytes(payload)))
     service.send_images('101', job)
     assert service.api.calls[-1][0] == 'sendDocument'
+
+
+def test_supplied_script_collected_across_messages_and_queued_without_options(service, monkeypatch):
+    from app import raghu_pipeline
+    monkeypatch.setenv('MEDIA_BACKEND','raghu')
+    monkeypatch.setenv('TELEGRAM_PRODUCTION_MODE','live')
+    monkeypatch.setenv('ALLOW_PAID_GENERATION','true')
+    monkeypatch.setattr(raghu_pipeline,'production_credentials',lambda:None)
+    monkeypatch.setattr(raghu_pipeline,'validate_music_for_request',lambda _:None)
+    service.handle(update('/generate'))
+    assert 'Use my script' in str(service.api.calls[-1])
+    service.handle(update('Use my script',ident=2))
+    service.handle(update('पहली रात राम गाँव पहुँचा।',ident=3))
+    service.handle(update('सुबह वह सुरक्षित लौट आया।',ident=4))
+    assert store.all_jobs() == []
+    service.handle(update('/done',ident=5))
+    service.handle(update('2 minutes',ident=6))
+    job, = store.all_jobs()
+    assert job['request']['supplied_script'] == 'पहली रात राम गाँव पहुँचा।\nसुबह वह सुरक्षित लौट आया।'
+    assert not job['request'].get('script_options')
+    assert job['request']['duration_seconds'] == 120

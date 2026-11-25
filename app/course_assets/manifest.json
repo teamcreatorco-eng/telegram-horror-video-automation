@@ -38,5 +38,21 @@
   "music/previews/shadows-halloween.mp4": {
     "bytes": 3142655,
     "sha256": "4ad58d6c5983d2bc36e217828ebca5fdce24816f0a6ed3a3b8cbeea39533347b"
+  },
+  "music/previews/ghostly-piano.mp3": {
+    "bytes": 209236,
+    "sha256": "e92a1999e5a1f6cb0aa2ad135d245f5afd6cc41621e68c09cf6ff1bf526644f0"
+  },
+  "music/previews/haunted-manor.mp3": {
+    "bytes": 216292,
+    "sha256": "38a8a776b5aea75a774fed52fdb1f8052ea62e3f3733407d58a488db0858c4cd"
+  },
+  "music/previews/midnight-graveyard.mp3": {
+    "bytes": 207028,
+    "sha256": "0ddf6a5828d59202a8329537560da4fad8b0642bbdc9f04965b0da4c6081136b"
+  },
+  "music/previews/shadows-halloween.mp3": {
+    "bytes": 211684,
+    "sha256": "dd797c70e07ca9ab06b8bf5a50b3e4a19dd5adf8191771e146aed813238c4ec5"
   }
 }

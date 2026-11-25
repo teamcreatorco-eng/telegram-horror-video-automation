@@ -11,3 +11,5 @@ Railway Docker build contains all approved default media:
 directly from the package on localhost and Railway, without a separate download,
 upload, paid API request or GPU. Existing custom files in DATA_DIR and explicit
 configuration paths still override defaults. Credentials are never included here.
+
+Music previews include MP3 audio samples for Telegram selection.

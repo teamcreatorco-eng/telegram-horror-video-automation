@@ -183,3 +183,24 @@ def test_original_image_brief_keeps_references_without_appended_sheet_text(monke
             assert "full character reference sheet" not in task[key]
             assert "Reference image 2" in task[key]
             assert task["refs"][-1] == "style-wide.jpg"
+
+
+def test_supplied_story_formats_once_without_script_choice(tmp_path, monkeypatch):
+    from app import clone_chat_planner as planner, store
+    source = 'एक यात्री ने खाली स्टेशन पर घंटी सुनी। अंत में वह घर लौट गया।'
+    store.save(tmp_path / 'supplied-script.json', {'text': source})
+    calls = []
+    formatted = {'entity': 'bell', 'characters': [], 'speech': [{'speaker':'NARRATOR','line':'वह घर लौट गया।'}]}
+    def ask(model, prompt, validate, tokens):
+        calls.append(prompt)
+        validate(formatted)
+        return formatted
+    monkeypatch.setattr(planner.planning_writer,'ask',ask)
+    monkeypatch.setenv('DEEPSEEK_API_KEY','fixture')
+    monkeypatch.setenv('DEEPSEEK_MODEL','fixture')
+    model = planner.DeepSeekWriter(tmp_path, lambda:None, lambda *_:None)
+    assert model.select_story('usual format', lambda _:None, 4000) == formatted
+    assert source in calls[0] and 'Preserve its characters' in calls[0]
+    assert model.select_story('usual format', lambda _:None, 4000) == formatted
+    assert len(calls) == 1
+    assert not (tmp_path / 'script-options.json').exists()

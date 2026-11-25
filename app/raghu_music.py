@@ -18,7 +18,8 @@ def choices():
         for root in (store.DATA / '_music' / 'catalog', bundled_media.ROOT / 'music'):
             track, preview = root / f'{ident}.mp3', root / 'previews' / f'{ident}.mp4'
             if track.is_file() and preview.is_file():
-                result.append(dict(id=ident, title=title, file=track, preview=preview))
+                result.append(dict(id=ident, title=title, file=track, preview=preview,
+                                   audio_preview=preview.with_suffix('.mp3') if preview.with_suffix('.mp3').is_file() else None))
                 break
     return result
 
