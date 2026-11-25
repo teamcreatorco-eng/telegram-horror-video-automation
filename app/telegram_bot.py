@@ -267,12 +267,20 @@ class Service:
                         return
                     request = Request(title='Your supplied story', language=os.getenv('TELEGRAM_LANGUAGE','Hindi'),
                                       mode=os.getenv('TELEGRAM_PRODUCTION_MODE','live')).model_dump()
+                    from .script_options import estimated_seconds
                     request['supplied_script'] = script
+                    request['duration_seconds'] = estimated_seconds(script)
+                    request['automatic_duration'] = True
+                    request['awaiting_music'] = True
                     with store.db() as c:
                         c.execute("UPDATE telegram_duration_requests SET request=? WHERE bot=? AND chat_id=? AND user_id=?",
                                   (json.dumps(request, ensure_ascii=False), *draft_key))
-                    self.ask_duration(cid)
-                    return
+                    self.api.text(cid, 'I’ll estimate the length from your narration and keep the complete story.')
+                    if raghu_music.choices():
+                        self.ask_music(cid)
+                        return
+                    return self.handle({"update_id": update["update_id"], "message": {
+                        "chat": chat, "from": user, "text": "No music"}})
                 if command.startswith('/'):
                     self.api.text(cid, 'Paste the script, send /done to continue, or /cancel.')
                     return

@@ -67,3 +67,9 @@ def script_text(value):
     beats = value.get("speech", value.get("beats", []))
     lines = [beat.get("line", beat.get("speech", "")) for beat in beats]
     return "\n".join(([value["title"]] if value.get("title") else []) + lines)
+
+
+def estimated_seconds(text):
+    # 140 spoken words per minute is the midpoint of the approved Hindi pacing range.
+    words = len(text.split())
+    return max(30, 5 * ((words * 60 + 699) // 700))

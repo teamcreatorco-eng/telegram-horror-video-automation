@@ -50,3 +50,9 @@ def test_clone_planner_stops_before_assets_until_selection(tmp_path, monkeypatch
     with pytest.raises(script_options.AwaitingScriptChoice):
         planning_writer.plan_title("A new story", 120, project_id="fixture", model=writer)
     assert len(store.read(tmp_path / "script-options.json")["options"]) == 2
+
+
+def test_supplied_hindi_duration_uses_words_and_natural_narration_pace():
+    from app.script_options import estimated_seconds
+    assert estimated_seconds("कहानी " * 140) == 60
+    assert estimated_seconds("कहानी " * 280) == 120

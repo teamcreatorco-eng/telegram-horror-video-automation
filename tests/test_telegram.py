@@ -533,8 +533,8 @@ def test_supplied_script_collected_across_messages_and_queued_without_options(se
     service.handle(update('सुबह वह सुरक्षित लौट आया।',ident=4))
     assert store.all_jobs() == []
     service.handle(update('/done',ident=5))
-    service.handle(update('2 minutes',ident=6))
     job, = store.all_jobs()
     assert job['request']['supplied_script'] == 'पहली रात राम गाँव पहुँचा।\nसुबह वह सुरक्षित लौट आया।'
     assert not job['request'].get('script_options')
-    assert job['request']['duration_seconds'] == 120
+    assert job['request']['duration_seconds'] == 30
+    assert job['request']['automatic_duration']
