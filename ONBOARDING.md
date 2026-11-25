@@ -114,3 +114,8 @@ Voice cloning is enabled in the template. Keep the same course reference on loca
 - If a run stops, send `/status` and select **Retry this step**. The bot uses saved work and shows the reason if it needs you to fix credentials, budget, or provider access. See the [recovery guide](docs/raghu-railway.md).
 
 In Telegram, Generate offers **Generate from scratch** or **Use my script**. For your own story, paste it in one or more messages and send /done, then choose music. The formatted Hindi narration determines the estimated duration, and recorded speech determines the final edit timing. The writer formats the supplied story into Hindi narration and stages it directly, without script-option approval. Music choices arrive as short audio samples.
+
+
+Before renting, production checks that its packaged worker scripts, model manifests, style references and narrator reference are available. Generated images and clips are checked when they arrive. A missing generation output can only be detected after its generation attempt.
+
+Narration alignment runs on the editing CPU after rental cleanup. If transcription is unavailable or cannot match the Hindi script, editing uses approximate cuts near quiet pauses, guided by each line's word count. The complete recording and original speech pace are preserved. Paragraphs using this fallback are recorded in narration-timing.json as approximate_pause_timing. Exact scene-to-word matching is less certain for those paragraphs.

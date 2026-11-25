@@ -137,3 +137,10 @@ def test_displaced_worker_cannot_mark_reassigned_job_failed_or_cancelled(tmp_pat
     pipeline.work(ident, lease=("first", threading.Event()))
     job = store.get(ident)
     assert (job["worker"], job["status"], job["stage"], job["error"]) == ("second", "running", "On second worker", None)
+
+
+def test_missing_worker_asset_is_reported_before_rental(tmp_path, monkeypatch):
+    monkeypatch.setattr(raghu_pipeline, "ASSETS", tmp_path)
+    monkeypatch.setenv("RAGHU_NARRATION_PROVIDER", "none")
+    with pytest.raises(RuntimeError, match="worker.sh.*No GPU was rented"):
+        raghu_pipeline.generation_preflight({"shots":[]})

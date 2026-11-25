@@ -734,7 +734,30 @@ def validate_motion(folder, shot, next_shot=None):
     store.save(report, result)
     return result
 
+def generation_preflight(shot_plan):
+    # Check install-time dependencies before entering a paid rental.
+    names = ["worker.sh", "common.py", "stills.py", "videos.py", "motion_runtime.py",
+             "motion_recovery.py", "download_video_only.py", "model-manifest.json",
+             "style-wide.jpg", "style-interior.jpg", "wan_worker.py", "wan_setup.py",
+             "qwen_stills.py", "qwen-model-manifest.json", "hunyuan_worker.py",
+             "hunyuan-model-manifest.json", "image_download.py"]
+    if raghu_narration.uses_clone():
+        names.append("voice_clone.py")
+        raghu_narration.clone_reference()
+        # This previously first ran on the paid worker, after all image generation.
+        raghu_narration.paragraph_groups(raghu_narration.narration_lines(shot_plan["shots"]))
+    for name in names:
+        path = ASSETS / name
+        if not path.is_file() or not path.stat().st_size:
+            raise RuntimeError(f"Required generation file is missing: {name}. Restore the checkout before retrying. No GPU was rented.")
+        if path.suffix == ".jpg":
+            check_image_file(path)
+        else:
+            path.read_bytes()
+
+
 def generate(folder, ident, shot_plan, check, progress):
+    generation_preflight(shot_plan)
     canonical, starts = still_batches(shot_plan)
     recover_saved_images(folder,canonical+starts,check)
     looks = {character["tag"]: character["prompt"] for character in shot_plan.get("cast", [])}

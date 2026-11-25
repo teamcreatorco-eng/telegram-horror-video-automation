@@ -11,7 +11,7 @@ import wave
 from pathlib import Path
 
 from . import media, store, bundled_media
-from .narration_layout import VERSION, request_key, paragraph_groups, aligned_spans
+from .narration_layout import VERSION, request_key, paragraph_groups, aligned_spans, pause_spans
 from .raghu_vast import VastRemoteCommandFailed
 
 VOICE = "hi-IN-MadhurNeural"
@@ -142,6 +142,7 @@ def align_recordings(folder, shots, check, progress):
     output = clone_folder(folder)
     model = None
     spans = []
+    alignment_notes = []
     cursor = 0
     sample_rate = None
     master = output / "narration-master.partial.wav"
@@ -173,7 +174,7 @@ def align_recordings(folder, shots, check, progress):
                     model = WhisperModel("base", device="cpu", compute_type="int8", cpu_threads=4,
                                          download_root=str(store.DATA / "_narration-alignment"))
                 converted = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-ar", "16000",
-                                            "-ac", "1", "-f", "f32le", "pipe:1"], capture_output=True, check=True)
+                                            "-ac", "1", "-f", "f32le", "pipe:1"], capture_output=True, check=True, timeout=60)
                 segments, _ = model.transcribe(np.frombuffer(converted.stdout, dtype="<f4"), language="hi",
                                                initial_prompt=" ".join(line["text"] for line in group),
                                                word_timestamps=True, vad_filter=False, beam_size=5,
@@ -182,8 +183,13 @@ def align_recordings(folder, shots, check, progress):
 
             try:
                 local = aligned_spans(path.with_suffix(".words.json"), group, frames / rate, transcribe)
-            except ValueError as exc:
-                raise RuntimeError(f"Editing paragraph {index}, scenes {group[0]['id']}–{group[-1]['id']}: {exc}") from exc
+            except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
+                # Preserve the full narration when recognition is unavailable or unreliable.
+                check()
+                local = pause_spans(group, pcm, rate)
+                alignment_notes.append(dict(paragraph=index, mode="approximate_pause_timing",
+                                            reason=type(exc).__name__))
+                progress(f"Editing paragraph {index}: using approximate cuts near speech pauses", 82)
             edges = [0] + [round(span["end"] * rate) for span in local[:-1]] + [frames]
             for span, start, end in zip(local, edges, edges[1:]):
                 target = output / f"narration-{span['id']}.wav"
@@ -197,7 +203,7 @@ def align_recordings(folder, shots, check, progress):
             cursor += frames
     master.replace(output / "narration-master.wav")
     store.save(output / "narration-timing.json", dict(version=VERSION, key=key, lines=lines,
-               sample_rate=sample_rate, duration=cursor/sample_rate, spans=spans))
+               sample_rate=sample_rate, duration=cursor/sample_rate, spans=spans, alignment_notes=alignment_notes))
 
 
 def produce_clone(remote, folder, shots, check, progress, assets):

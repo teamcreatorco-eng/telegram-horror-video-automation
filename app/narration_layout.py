@@ -103,3 +103,36 @@ def line_spans(lines, words, duration):
         boundaries.append(boundary)
     boundaries.append(duration)
     return [dict(id=line['id'], start=boundaries[i], end=boundaries[i + 1]) for i, line in enumerate(lines)]
+
+
+def pause_spans(lines, pcm, rate):
+    """Approximate uncertain scene boundaries at nearby quiet audio windows."""
+    from array import array
+    import sys
+    samples = array('h')
+    samples.frombytes(pcm)
+    if sys.byteorder != 'little':
+        samples.byteswap()
+    duration = len(samples) / rate
+    if not samples or duration <= 0 or not lines:
+        raise ValueError("No readable narration samples for editing")
+    window = max(1, rate // 50)
+    energy = [sum(abs(x) for x in samples[i:i+window]) / len(samples[i:i+window])
+              for i in range(0, len(samples), window)]
+    quiet = max(30, max(energy) * .025)
+    weights = [max(1, len(line['text'].split())) for line in lines]
+    total, cumulative = sum(weights), 0
+    boundaries = [0.0]
+    for i, weight in enumerate(weights[:-1], 1):
+        cumulative += weight
+        target = duration * cumulative / total
+        low = max(boundaries[-1] + 1/rate, target - .5)
+        high = min(duration - (len(lines)-i)/rate, target + .5)
+        candidates = [(j+.5)*window/rate for j,e in enumerate(energy)
+                      if e <= quiet and low < (j+.5)*window/rate < high]
+        boundary = min(candidates, key=lambda t: abs(t-target)) if candidates else target
+        boundary = max(boundaries[-1]+1/rate, min(boundary, duration-(len(lines)-i)/rate))
+        boundaries.append(boundary)
+    boundaries.append(duration)
+    return [dict(id=line['id'], start=boundaries[i], end=boundaries[i+1])
+            for i,line in enumerate(lines)]

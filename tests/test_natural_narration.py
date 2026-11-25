@@ -180,8 +180,9 @@ def test_raw_recordings_skip_rerental_and_split_losslessly_on_editor(tmp_path, m
         raise ValueError("Narration word timestamps do not match the script")
     with monkeypatch.context() as patch:
         patch.setattr(raghu_narration, "aligned_spans", mismatch)
-        with pytest.raises(RuntimeError, match="Editing paragraph 1"):
-            raghu_narration.align_recordings(folder, shots, lambda: None, lambda *_: None)
+        raghu_narration.align_recordings(folder, shots, lambda: None, lambda *_: None)
+    assert store.read(output / 'narration-timing.json')['alignment_notes'][0]['mode'] == 'approximate_pause_timing'
+    (output / 'narration-timing.json').unlink()
     assert raghu_narration.pending_rental_audio(folder, shots) == []
     store.save(raw.with_suffix('.words.json'), words)
     raghu_narration.align_recordings(folder, shots, lambda: None, lambda *_: None)
@@ -220,3 +221,14 @@ def test_narration_reports_worker_failure_separately_from_disconnect(tmp_path, m
     with pytest.raises(error, match=message) as caught:
         raghu_narration.produce_clone(Remote(), folder, shots, lambda: None, lambda *_: None, raghu_pipeline.ASSETS)
     assert "private-log-content" not in str(caught.value)
+
+
+def test_pause_timing_keeps_order_and_all_samples():
+    import struct
+    from app.narration_layout import pause_spans
+    rate = 1000
+    pcm = b"".join(struct.pack("<h", 0 if 900 <= i < 1100 else 5000) for i in range(2000))
+    spans = pause_spans([dict(id='001',text='one line'),dict(id='002',text='next line')], pcm, rate)
+    assert .9 <= spans[0]['end'] <= 1.1
+    assert spans[0]['start'] == 0 and spans[0]['end'] == spans[1]['start']
+    assert spans[1]['end'] == 2

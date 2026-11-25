@@ -29,3 +29,18 @@ def test_retry_receives_rejected_draft_and_repairs_its_structure():
         v,120,1300,1550,editorial_checks=False),22000)
     assert result==good
     assert len(prompts)==2
+
+
+def test_scene_repair_receives_the_actual_rejected_scene_data():
+    broken = {"scenes":[{"character":"UNKNOWN"}]}
+    fixed = {"scenes":[{"character":"MEERA"}]}
+    prompts = []
+    class Model:
+        def complete(self, prompt, **kwargs):
+            prompts.append(prompt)
+            return json.dumps(broken if len(prompts)==1 else fixed)
+    def validate(value):
+        if value != fixed:
+            raise ValueError("Unknown character UNKNOWN")
+    assert writer.ask(Model(), "Stage saved script", validate, 1000) == fixed
+    assert json.dumps(broken) in prompts[1]

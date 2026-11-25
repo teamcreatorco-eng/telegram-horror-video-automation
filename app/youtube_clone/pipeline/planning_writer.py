@@ -77,10 +77,14 @@ def ask(model, prompt, check, tokens, *, attempts=3):
             if isinstance(result, dict) and isinstance(result.get('speech'), list):
                 feedback += (
                     '\nRepair this draft while retaining its story, chronological order and complete ending. '
-                    'Re-segment the spoken content into the exact requested beat count; do not add '
+                    'Repair the reported structural issue; preserve the natural beat count unless explicitly required; do not add '
                     'empty placeholders or silently discard the ending. Each beat must still be '
                     'one short filmable event. Recount the array before returning JSON.'
                     '\nRejected JSON draft:\n' + json.dumps(result, ensure_ascii=False))
+            elif isinstance(result, dict):
+                feedback += ('\nRepair only the reported fields in this draft. Preserve the locked story, '
+                             'cast, scene order and narration.\nRejected JSON draft:\n'
+                             + json.dumps(result, ensure_ascii=False))
     raise ValueError("At least one writing attempt is required")
 
 
