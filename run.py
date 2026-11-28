@@ -2,6 +2,8 @@
 import argparse, time, os
 from dotenv import load_dotenv
 load_dotenv()
+from app.runtime_tools import tool_environment
+os.environ.update(tool_environment(os.environ))
 
 def main():
     p=argparse.ArgumentParser(description='Nightfall: title to 60-second horror video')

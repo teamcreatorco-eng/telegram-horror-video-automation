@@ -119,3 +119,5 @@ In Telegram, Generate offers **Generate from scratch** or **Use my script**. For
 Before renting, production checks that its packaged worker scripts, model manifests, style references and narrator reference are available. Generated images and clips are checked when they arrive. A missing generation output can only be detected after its generation attempt.
 
 Narration alignment runs on the editing CPU after rental cleanup. If transcription is unavailable or cannot match the Hindi script, editing uses approximate cuts near quiet pauses, guided by each line's word count. The complete recording and original speech pace are preserved. Paragraphs using this fallback are recorded in narration-timing.json as approximate_pause_timing. Exact scene-to-word matching is less certain for those paragraphs.
+
+The localhost launcher automatically adds the active Python environment’s command folder to PATH. Install requirements and vastai using that same Python interpreter. Terminal activation or a machine-specific PATH entry in .env is unnecessary. Restart the bot after updating an existing checkout.

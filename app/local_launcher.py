@@ -11,6 +11,7 @@ from urllib.request import urlopen
 from urllib.error import URLError
 import webbrowser
 from dotenv import dotenv_values
+from .runtime_tools import tool_environment
 
 
 def settings(root, environ=None):
@@ -18,6 +19,7 @@ def settings(root, environ=None):
     env={**dotenv_values(root/'.env'),**dotenv_values(root/'.env.telegram'),
          **(os.environ if environ is None else environ)}
     env={str(k):str(v) for k,v in env.items() if v is not None}
+    env=tool_environment(env)
     port=int(env.get('PORT','8000'))
     if not 1<=port<=65535:raise ValueError('PORT must be between 1 and 65535')
     data=Path(env.get('DATA_DIR') or root/'data')

@@ -69,3 +69,18 @@ def test_recycled_pid_is_not_mistaken_for_previous_controller(tmp_path,monkeypat
     monkeypatch.setattr(launcher.subprocess,'Popen',lambda *a,**k:Child())
     monkeypatch.setattr(launcher.webbrowser,'open',lambda _:None)
     assert launcher.start(config)==config['url']+'/healthz'
+
+
+def test_launcher_includes_active_interpreter_tools_without_activation(tmp_path, monkeypatch):
+    import os
+    import sys
+    import sysconfig
+    from app import local_launcher
+    scripts = tmp_path / 'venv' / 'Scripts'
+    scripts.mkdir(parents=True)
+    python = scripts / 'python.exe'
+    monkeypatch.setattr(sys, 'executable', str(python))
+    monkeypatch.setattr(sysconfig, 'get_path', lambda name: str(scripts))
+    config = local_launcher.settings(tmp_path, environ={'PATH': 'system-tools'})
+    assert config['env']['PATH'].split(os.pathsep)[0] == str(scripts)
+    assert 'system-tools' in config['env']['PATH'].split(os.pathsep)
