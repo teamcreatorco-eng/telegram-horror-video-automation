@@ -229,23 +229,17 @@ def check_script(script, seconds=60, *, editorial_checks=True):
     count = seconds // 5
     if len(script.beats) != count:
         raise ValueError(f"Write exactly {count} ordered beats")
-    words = 0
     dialogue = set()
     for number, beat in enumerate(script.beats, 1):
-        line_words = len(beat.speech.split())
-        if (beat.scene_number != number or (editorial_checks and line_words > 16) or not re.search(r"[\u0900-\u097f]", beat.speech)
+        if (beat.scene_number != number or not re.search(r"[\u0900-\u097f]", beat.speech)
                 or re.search(r"[A-Za-z\r\n]", beat.speech)):
             raise ValueError(f"Beat {number} must have its exact number and one short Hindi line")
         if beat.speaker != "NARRATOR":
             if not re.fullmatch(r"@CHAR-\d{2}-[A-Z][A-Z0-9-]*", beat.speaker):
                 raise ValueError(f"Beat {number} must use NARRATOR or its exact character tag")
             dialogue.add(beat.speaker)
-        words += line_words
-    word_limit = int(seconds * 155 / 60)
     dialogue_limit = count // 4
     direct_lines = sum(b.speaker != "NARRATOR" for b in script.beats)
-    if editorial_checks and words > word_limit:
-        raise ValueError(f"The script has {words} words. Shorten to {word_limit} or fewer.")
     if editorial_checks and (len(dialogue) > 2 or direct_lines > dialogue_limit):
         raise ValueError(f"The script has {direct_lines} dialogue lines across {len(dialogue)} speakers. "
                          f"Use at most {dialogue_limit} dialogue lines and at most two speakers.")

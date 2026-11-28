@@ -44,3 +44,27 @@ def test_scene_repair_receives_the_actual_rejected_scene_data():
             raise ValueError("Unknown character UNKNOWN")
     assert writer.ask(Model(), "Stage saved script", validate, 1000) == fixed
     assert json.dumps(broken) in prompts[1]
+
+
+def test_story_word_targets_never_reject_usable_hindi():
+    from app.youtube_clone.pipeline.planning_writer import check_story
+    short = story(6)
+    check_story(short, 6, 65, 78, editorial_checks=True)
+    long = story(6)
+    for beat in long['speech']:
+        beat['line'] = 'उसने ' * 25 + 'देखा।'
+    check_story(long, 6, 65, 78, editorial_checks=True)
+
+
+@pytest.mark.parametrize('words', [2, 30])
+def test_legacy_planners_do_not_reject_script_word_count(words):
+    from types import SimpleNamespace
+    from app import clone_planner, youtube_clone_writer, story_engine
+    text = 'छाया ' * words + 'थी।'
+    lines = [SimpleNamespace(text=text, delivery='narration', speaker_name='') for _ in range(6)]
+    assert clone_planner.script_errors(SimpleNamespace(lines=lines), 30, 6) == []
+    beats = [SimpleNamespace(scene_number=i+1, speech=text, speaker='NARRATOR') for i in range(6)]
+    youtube_clone_writer.check_script(SimpleNamespace(beats=beats), 30)
+    story = {'lines':[{'text':text,'speaker':'NARRATOR' if i==0 else 'मीरा'} for i in range(6)]}
+    issues, _, count = story_engine.script_issues(story, [])
+    assert issues == [] and count > 0

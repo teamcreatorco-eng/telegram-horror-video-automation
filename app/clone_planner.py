@@ -88,12 +88,9 @@ def script_errors(script, seconds, count):
     errors = []
     if len(script.lines) != count:
         errors.append(f"Return exactly {count} spoken lines.")
-    words = [len(line.text.split()) for line in script.lines]
-    if sum(words) > round(seconds * 2.5):
-        errors.append(f"Shorten the script to at most {round(seconds * 2.5)} spoken words.")
-    for n, (line, length) in enumerate(zip(script.lines, words), 1):
-        if length > 16 or not re.search(r"[\u0900-\u097f]", line.text) or re.search(r"[A-Za-z\n]", line.text):
-            errors.append(f"Line {n} needs a single Hindi line of at most 16 words.")
+    for n, line in enumerate(script.lines, 1):
+        if not re.search(r"[\u0900-\u097f]", line.text) or re.search(r"[A-Za-z\n]", line.text):
+            errors.append(f"Line {n} needs a single Hindi line.")
         if line.delivery == "dialogue" and not line.speaker_name.strip():
             errors.append(f"Name the character who speaks line {n}.")
     if sum(line.delivery == "dialogue" for line in script.lines) > (count + 3) // 4:

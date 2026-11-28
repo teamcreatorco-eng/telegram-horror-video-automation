@@ -96,9 +96,6 @@ def canonical_story(value):
 
 def script_issues(story,history):
     lines=story['lines'];text=' '.join(l['text'] for l in lines);words=len(text.split());issues=[]
-    if not 90<=words<=120:issues.append(f'Total spoken words {words}; require 90-120.')
-    for i,line in enumerate(lines):
-        if not 12<=len(line['text'].split())<=22:issues.append(f'Scene {i+1} needs 12-22 words.')
     names={l['speaker'] for l in lines if l['speaker']!='NARRATOR'}
     if not 1<=len(names)<=3 or not any(l['speaker']=='NARRATOR' for l in lines):issues.append('Need narrator plus 1-3 character speakers.')
     for old in history:

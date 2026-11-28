@@ -118,14 +118,7 @@ def check_story(story, count, low, high, *, editorial_margin=False, editorial_ch
             raise ValueError("Every speaker must be NARRATOR or a declared character tag")
         if not re.search(r"[\u0904-\u0939]", beat["line"]) or re.search(r"[A-Za-z\r\n]", beat["line"]):
             raise ValueError("Every spoken line must be single-line Devanagari Hindi")
-    lengths = [len(beat["line"].split()) for beat in speech]
-    words = sum(lengths)
-    # Hindi word counts estimate pace. Allow a small overage only when no beat is crowded.
-    ceiling = high + max(2, high // 50) if editorial_margin else high
-    if editorial_checks and not low <= words <= ceiling:
-        raise ValueError(f"Speech has {words} words; expected {low}–{ceiling}")
-    if editorial_checks and editorial_margin and (words > high or count == 6) and max(lengths) > 16:
-        raise ValueError("Keep each spoken line at or below 16 words for its five-second shot")
+    # Word counts guide pacing in prompts; they never reject a usable script.
     if not any(beat["speaker"] == NARRATOR for beat in speech):
         raise ValueError("Include narrator speech")
 
